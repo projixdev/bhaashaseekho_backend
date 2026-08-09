@@ -1,0 +1,20 @@
+{
+  "name": "bhaashaseekho_backend",
+  "version": "1.0.0",
+  "description": "Standalone Express backend for Bhaasha Seekho — serves the website, mobile app, and admin tooling.",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "mongoose": "^9.9.1"
+  }
+}
