@@ -17,7 +17,11 @@ function required(name) {
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT) || 4000,
-  corsOrigin: process.env.CORS_ORIGIN || "*",
+  // Trailing slash trimmed: the CORS middleware echoes this string verbatim
+  // as the Access-Control-Allow-Origin response header, which browsers only
+  // accept if it matches the request's Origin header exactly — and Origin
+  // headers never have a trailing slash.
+  corsOrigin: (process.env.CORS_ORIGIN || "*").trim().replace(/\/+$/, ""),
 
   get mongodbUri() {
     return required("MONGODB_URI");
