@@ -4,6 +4,7 @@ import contactRoutes from "./contactRoutes.js";
 import authRoutes from "./authRoutes.js";
 import classRoutes from "./classRoutes.js";
 import assignmentRoutes from "./assignmentRoutes.js";
+import rosterRoutes from "./rosterRoutes.js";
 
 const router = Router();
 
@@ -12,5 +13,6 @@ router.use("/contact", contactRoutes);
 router.use("/auth", authRoutes);
 router.use("/classes", classRoutes);
 router.use("/assignments", assignmentRoutes);
+router.use("/roster", rosterRoutes);
 
 export default router;
