@@ -28,6 +28,12 @@ export const env = {
   },
   mongodbDb: process.env.MONGODB_DB,
 
+  // Signs both the mobile app's session JWT and the OTP HMAC (see
+  // utils/otp.js) — only needed once auth routes are actually hit.
+  get jwtSecret() {
+    return required("JWT_SECRET");
+  },
+
   clientNotificationEmail: process.env.CLIENT_NOTIFICATION_EMAIL,
 
   brevoApiKey: process.env.BREVO_API_KEY,

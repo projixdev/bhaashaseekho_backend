@@ -32,6 +32,32 @@ export function validateContactInput(body) {
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
+const PHONE_DIGITS_RE = /^\d{10,15}$/;
+const OTP_RE = /^\d{6}$/;
+
+// Loose on purpose: strips common formatting (+, spaces, dashes) and only
+// checks digit count, since the app targets Indian numbers today but
+// shouldn't need a schema change to support other countries later.
+export function normalizePhone(value) {
+  return String(value ?? "").replace(/[^\d]/g, "");
+}
+
+export function validatePhoneInput(body) {
+  const errors = {};
+  const digits = normalizePhone(body.phone);
+  if (!PHONE_DIGITS_RE.test(digits)) errors.phone = "Please enter a valid phone number.";
+  if (body.role && !["student", "teacher"].includes(body.role)) errors.role = "Invalid role.";
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+export function validateOtpInput(body) {
+  const errors = {};
+  const digits = normalizePhone(body.phone);
+  if (!PHONE_DIGITS_RE.test(digits)) errors.phone = "Please enter a valid phone number.";
+  if (!requiredString(body.otp) || !OTP_RE.test(body.otp.trim())) errors.otp = "Enter the 6-digit code.";
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
 // Minimal HTML-escaping for values interpolated into notification emails —
 // prevents a malicious form submission from injecting markup into the email
 // Brevo sends to the client's inbox.
