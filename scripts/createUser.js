@@ -1,0 +1,103 @@
+// Admin-only tool — creates or updates a User (and, for students, their
+// course Enrollment) directly in MongoDB. Run locally with your own .env;
+// never exposed over HTTP. This is how student accounts get activated after
+// enrolling (the website is marketing-only and never creates accounts
+// itself) and how teacher accounts get created, since neither role can
+// self-register through the app's OTP login.
+//
+// Usage:
+//   node scripts/createUser.js --phone 9876543210 --name "Priya Nair" --role teacher
+//   node scripts/createUser.js --phone 9123456789 --name "Rohan K" --role student --course hindi --tutor 9876543210 --batch group
+//
+// --course/--tutor/--batch only apply to students and are optional — you can
+// create a login-capable student account first and assign their enrollment
+// later by re-running with those flags (matches by phone, so safe to re-run).
+import mongoose from "mongoose";
+import { connectDB } from "../src/config/db.js";
+import User from "../src/models/User.js";
+import Enrollment from "../src/models/Enrollment.js";
+import { normalizePhone, PHONE_DIGITS_RE } from "../src/utils/validation.js";
+
+function parseArgs(argv) {
+  const args = {};
+  for (let i = 0; i < argv.length; i++) {
+    if (!argv[i].startsWith("--")) continue;
+    const key = argv[i].slice(2);
+    const next = argv[i + 1];
+    if (next !== undefined && !next.startsWith("--")) {
+      args[key] = next;
+      i++;
+    } else {
+      args[key] = true;
+    }
+  }
+  return args;
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+
+  if (!args.phone || !args.name) {
+    console.error(
+      'Usage: node scripts/createUser.js --phone <digits> --name "Full Name" [--role student|teacher]'
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const phone = normalizePhone(args.phone);
+  if (!PHONE_DIGITS_RE.test(phone)) {
+    console.error(`Invalid phone number: ${args.phone}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const role = args.role === "teacher" ? "teacher" : "student";
+
+  await connectDB();
+
+  let user = await User.findOne({ phone });
+  const isNew = !user;
+  if (!user) user = new User({ phone });
+
+  user.name = args.name;
+  user.role = role;
+  await user.save();
+
+  console.log(`${isNew ? "Created" : "Updated"} ${user.role}: ${user.name} (${user.phone}) — id ${user._id}`);
+
+  if (role === "student" && args.course) {
+    let tutorId = null;
+    if (args.tutor) {
+      const tutorPhone = normalizePhone(args.tutor);
+      const tutor = await User.findOne({ phone: tutorPhone, role: "teacher" });
+      if (!tutor) {
+        console.error(`No teacher found with phone ${args.tutor} — create them first. Enrollment not saved.`);
+        process.exitCode = 1;
+        await mongoose.disconnect();
+        return;
+      }
+      tutorId = tutor._id;
+    }
+
+    const courseSlug = String(args.course).toLowerCase();
+    const batchType = args.batch === "group" ? "group" : "1-on-1";
+
+    const enrollment = await Enrollment.findOneAndUpdate(
+      { student: user._id, courseSlug },
+      { student: user._id, courseSlug, tutor: tutorId, batchType, status: "active" },
+      { upsert: true, returnDocument: "after" }
+    );
+
+    console.log(
+      `Enrolled ${user.name} in "${courseSlug}" (${enrollment.batchType})${tutorId ? ` with tutor ${args.tutor}` : ""}`
+    );
+  }
+
+  await mongoose.disconnect();
+}
+
+main().catch((err) => {
+  console.error("Failed:", err);
+  process.exitCode = 1;
+});

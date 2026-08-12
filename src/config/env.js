@@ -1,6 +1,8 @@
 import dotenv from "dotenv";
 
-dotenv.config();
+// quiet: true suppresses dotenv's own console output (as of v17 it logs a
+// promotional "tip" line on every load) — unrelated to our own logging.
+dotenv.config({ quiet: true });
 
 function required(name) {
   const value = process.env[name];
@@ -40,4 +42,16 @@ export const env = {
   brevoSenderEmail: process.env.BREVO_SENDER_EMAIL,
 
   whatsappNumber: process.env.WHATSAPP_NUMBER,
+
+  // Homework/assessment file uploads — only needed once the assignments
+  // submit route is actually hit.
+  get cloudinaryCloudName() {
+    return required("CLOUDINARY_CLOUD_NAME");
+  },
+  get cloudinaryApiKey() {
+    return required("CLOUDINARY_API_KEY");
+  },
+  get cloudinaryApiSecret() {
+    return required("CLOUDINARY_API_SECRET");
+  },
 };

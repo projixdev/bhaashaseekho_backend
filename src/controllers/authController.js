@@ -21,13 +21,20 @@ export async function sendOtp(req, res) {
     }
 
     const phone = normalizePhone(req.body.phone);
-    const role = req.body.role === "teacher" ? "teacher" : "student";
 
     await connectDB();
 
-    let user = await User.findOne({ phone });
+    const user = await User.findOne({ phone });
     if (!user) {
-      user = new User({ phone, role });
+      // Accounts are never self-created: students are activated by admin
+      // after enrolling on the website, teachers are created by admin
+      // directly (see scripts/createUser.js). An unknown number means
+      // neither has happened yet.
+      res.status(404).json({
+        success: false,
+        message: "This number isn't enrolled yet. Please enroll on our website first.",
+      });
+      return;
     }
 
     const otp = generateOtp();

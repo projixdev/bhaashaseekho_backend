@@ -32,7 +32,7 @@ export function validateContactInput(body) {
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
-const PHONE_DIGITS_RE = /^\d{10,15}$/;
+export const PHONE_DIGITS_RE = /^\d{10,15}$/;
 const OTP_RE = /^\d{6}$/;
 
 // Loose on purpose: strips common formatting (+, spaces, dashes) and only
