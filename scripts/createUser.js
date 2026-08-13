@@ -6,9 +6,13 @@
 // self-register through the app's OTP login.
 //
 // Usage:
-//   node scripts/createUser.js --phone 9876543210 --name "Priya Nair" --role teacher
-//   node scripts/createUser.js --phone 9123456789 --name "Rohan K" --role student --course hindi --tutor 9876543210 --batch group
+//   node scripts/createUser.js --phone 9876543210 --name "Priya Nair" --role teacher --email priya@example.com
+//   node scripts/createUser.js --phone 9123456789 --name "Rohan K" --role student --email rohan@example.com --course hindi --tutor 9876543210 --batch group
 //
+// --email is optional but should always be passed going forward: OTP
+// delivery is email-only (ROADMAP.md Phase 16) — an account created without
+// one can't receive a login code until an admin re-runs this script with
+// --email to backfill it.
 // --course/--tutor/--batch only apply to students and are optional — you can
 // create a login-capable student account first and assign their enrollment
 // later by re-running with those flags (matches by phone, so safe to re-run).
@@ -17,6 +21,11 @@ import { connectDB } from "../src/config/db.js";
 import User from "../src/models/User.js";
 import Enrollment from "../src/models/Enrollment.js";
 import { normalizePhone, PHONE_DIGITS_RE } from "../src/utils/validation.js";
+
+// Mirrors the (unexported) pattern in src/utils/validation.js — duplicated
+// rather than exported from there to keep this phase's changes scoped to
+// this file.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function parseArgs(argv) {
   const args = {};
@@ -39,7 +48,7 @@ async function main() {
 
   if (!args.phone || !args.name) {
     console.error(
-      'Usage: node scripts/createUser.js --phone <digits> --name "Full Name" [--role student|teacher]'
+      'Usage: node scripts/createUser.js --phone <digits> --name "Full Name" [--role student|teacher] [--email <address>]'
     );
     process.exitCode = 1;
     return;
@@ -52,6 +61,16 @@ async function main() {
     return;
   }
 
+  let email;
+  if (args.email) {
+    email = String(args.email).trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) {
+      console.error(`Invalid email address: ${args.email}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   const role = args.role === "teacher" ? "teacher" : "student";
 
   await connectDB();
@@ -62,9 +81,12 @@ async function main() {
 
   user.name = args.name;
   user.role = role;
+  if (email) user.email = email;
   await user.save();
 
-  console.log(`${isNew ? "Created" : "Updated"} ${user.role}: ${user.name} (${user.phone}) — id ${user._id}`);
+  console.log(
+    `${isNew ? "Created" : "Updated"} ${user.role}: ${user.name} (${user.phone})${user.email ? ` <${user.email}>` : " — no email on file, cannot receive OTPs yet"} — id ${user._id}`
+  );
 
   if (role === "student" && args.course) {
     let tutorId = null;

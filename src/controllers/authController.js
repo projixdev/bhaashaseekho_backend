@@ -2,7 +2,8 @@ import jwt from "jsonwebtoken";
 import { connectDB } from "../config/db.js";
 import User from "../models/User.js";
 import { env } from "../config/env.js";
-import { sendOtpSms } from "../services/smsService.js";
+import { sendTransactionalEmail } from "../services/brevoService.js";
+import { renderEmailLayout } from "../services/emailTemplates.js";
 import { generateOtp, hashOtp, verifyOtpHash, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../utils/otp.js";
 import { validatePhoneInput, validateOtpInput, normalizePhone } from "../utils/validation.js";
 
@@ -10,6 +11,18 @@ function signSession(user) {
   return jwt.sign({ sub: user._id.toString(), phone: user.phone, role: user.role }, env.jwtSecret, {
     expiresIn: "30d",
   });
+}
+
+// Reuses the shared Brevo layout (services/emailTemplates.js) — same
+// branding as the lead/contact notification emails, just a different body.
+function buildOtpEmailHtml(otp) {
+  const minutes = Math.round(OTP_TTL_MS / 60000);
+  const inner = `
+    <p style="margin:0 0 16px;">Your login code is:</p>
+    <p style="margin:0 0 20px; font-size:28px; font-weight:bold; letter-spacing:4px; color:#0f172a;">${otp}</p>
+    <p style="margin:0; color:#64748b; font-size:13px;">Valid for ${minutes} minutes. Don't share this code with anyone.</p>
+  `;
+  return renderEmailLayout({ preheader: `Your login code: ${otp}`, bodyHtml: inner });
 }
 
 export async function sendOtp(req, res) {
@@ -37,6 +50,17 @@ export async function sendOtp(req, res) {
       return;
     }
 
+    // OTP delivery is email-only (ROADMAP.md Phase 16) — without one on file
+    // there's nowhere to send the code, so fail before generating one rather
+    // than persisting an OTP nobody can ever retrieve.
+    if (!user.email) {
+      res.status(400).json({
+        success: false,
+        message: "No email on file — contact admin to add one.",
+      });
+      return;
+    }
+
     const otp = generateOtp();
     user.otpHash = hashOtp(phone, otp);
     user.otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
@@ -47,16 +71,20 @@ export async function sendOtp(req, res) {
     // Best-effort: the OTP is already persisted, so a delivery hiccup
     // shouldn't fail the request — the user can just request a resend.
     try {
-      await sendOtpSms(phone, otp);
-    } catch (smsErr) {
-      console.error("OTP SMS send failed:", smsErr);
+      await sendTransactionalEmail({
+        to: user.email,
+        subject: "Your Bhaasha Seekho login code",
+        htmlContent: buildOtpEmailHtml(otp),
+      });
+    } catch (emailErr) {
+      console.error("OTP email send failed:", emailErr);
     }
 
     res.json({
       success: true,
-      // No SMS provider is wired up yet — surface the code directly outside
-      // production so the flow is testable end-to-end. Remove once a real
-      // provider is configured.
+      // devOtp keeps local/dev testing independent of Brevo actually
+      // delivering — surfaced only outside production. Remove once email
+      // delivery is proven reliable enough to depend on exclusively.
       ...(env.nodeEnv !== "production" ? { devOtp: otp } : {}),
     });
   } catch (err) {
