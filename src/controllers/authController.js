@@ -8,9 +8,26 @@ import { generateOtp, hashOtp, verifyOtpHash, OTP_TTL_MS, MAX_OTP_ATTEMPTS } fro
 import { validatePhoneInput, validateOtpInput, normalizePhone } from "../utils/validation.js";
 
 function signSession(user) {
-  return jwt.sign({ sub: user._id.toString(), phone: user.phone, role: user.role }, env.jwtSecret, {
-    expiresIn: "30d",
-  });
+  return jwt.sign(
+    {
+      sub: user._id.toString(),
+      phone: user.phone,
+      role: user.role,
+      isAdmin: user.isAdmin,
+      isTrial: user.isTrial,
+      // ISO string, not a raw Date — JWT payloads are JSON, and comparing
+      // this against Date.now() on every request (requireAuth) is how a
+      // trial's natural expiry is caught even on an already-issued,
+      // otherwise-still-valid token.
+      accessExpiresAt: user.accessExpiresAt ? user.accessExpiresAt.toISOString() : null,
+    },
+    env.jwtSecret,
+    { expiresIn: "30d" }
+  );
+}
+
+function isTrialExpired(user) {
+  return Boolean(user.isTrial && user.accessExpiresAt && user.accessExpiresAt.getTime() < Date.now());
 }
 
 // Reuses the shared Brevo layout (services/emailTemplates.js) — same
@@ -47,6 +64,15 @@ export async function sendOtp(req, res) {
         success: false,
         message: "This number isn't enrolled yet. Please enroll on our website first.",
       });
+      return;
+    }
+
+    // Distinct from the "not enrolled" case above — this is a real account
+    // whose time-limited window has simply passed (ROADMAP.md Phase 14).
+    // Kept as its own message rather than collapsed into either the
+    // not-enrolled or no-email cases, which mean different things to a user.
+    if (isTrialExpired(user)) {
+      res.status(403).json({ success: false, message: "Your trial access has expired." });
       return;
     }
 
@@ -138,7 +164,14 @@ export async function verifyOtp(req, res) {
     res.json({
       success: true,
       token: signSession(user),
-      user: { id: user._id, phone: user.phone, name: user.name, role: user.role },
+      user: {
+        id: user._id,
+        phone: user.phone,
+        name: user.name,
+        role: user.role,
+        isAdmin: user.isAdmin,
+        isTrial: user.isTrial,
+      },
     });
   } catch (err) {
     console.error("POST /api/auth/verify-otp failed:", err);

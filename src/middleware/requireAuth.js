@@ -14,7 +14,18 @@ export function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, env.jwtSecret);
-    req.user = { id: payload.sub, phone: payload.phone, role: payload.role };
+
+    // Catches a trial whose access window naturally elapsed while an
+    // already-issued (otherwise still-valid for 30 days) token is still in
+    // use — sendOtp only blocks *new* logins, this blocks the rest of an
+    // expired trial's session too (ROADMAP.md Phase 14). Read straight off
+    // the token, no DB lookup, consistent with the rest of this middleware.
+    if (payload.isTrial && payload.accessExpiresAt && new Date(payload.accessExpiresAt).getTime() < Date.now()) {
+      res.status(403).json({ success: false, message: "Your trial access has expired." });
+      return;
+    }
+
+    req.user = { id: payload.sub, phone: payload.phone, role: payload.role, isAdmin: Boolean(payload.isAdmin) };
     next();
   } catch {
     res.status(401).json({ success: false, message: "Invalid or expired session." });

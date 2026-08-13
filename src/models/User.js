@@ -11,6 +11,34 @@ const UserSchema = new mongoose.Schema(
     name: { type: String, trim: true, maxlength: 120, default: "" },
     role: { type: String, enum: ["student", "teacher"], default: "student" },
 
+    // The founder is a teacher account with isAdmin: true, not a separate
+    // role (ROADMAP.md "The model (confirmed)"). Nothing distinguished a
+    // founder account before Phase 15 — no isAdmin field, env var, or
+    // hardcoded check existed anywhere in either repo (confirmed by grep
+    // before adding this). Set via scripts/setAdmin.js, never self-serve.
+    isAdmin: { type: Boolean, default: false },
+
+    // bcrypt hash, only ever set for isAdmin accounts (ROADMAP.md Phase 17
+    // — POST /api/admin/login, for the website dashboard; students/teachers
+    // never get one, OTP stays their only login method). select: false so a
+    // stray `.find()`/`.lean()` elsewhere in the codebase can never
+    // accidentally serialize a hash into a response — POST /api/admin/login
+    // explicitly opts in with .select("+password").
+    password: { type: String, select: false, maxlength: 100 },
+
+    // Real completion count, written by classController.endClass when a
+    // tutor marks a student "present" (ROADMAP.md Phase 13). Drives the
+    // assessment unlock gate in assignmentController.js — replaces the old
+    // scheduledAt-based stand-in.
+    completedClassCount: { type: Number, default: 0 },
+
+    // Set by the website's trial-booking flow (leadsController.postLead,
+    // ROADMAP.md Phase 14) — a separate, rate-limited path from admin
+    // account creation. accessExpiresAt is only meaningful when isTrial is
+    // true; null otherwise.
+    isTrial: { type: Boolean, default: false },
+    accessExpiresAt: { type: Date, default: null },
+
     // OTP is never stored in plaintext — otpHash is an HMAC keyed by
     // env.jwtSecret (see utils/otp.js). otpAttempts guards against brute-force
     // guessing of a live OTP within its expiry window.

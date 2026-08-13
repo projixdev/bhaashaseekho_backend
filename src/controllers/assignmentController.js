@@ -1,18 +1,17 @@
 import { connectDB } from "../config/db.js";
 import { uploadBuffer } from "../config/cloudinary.js";
 import Assignment from "../models/Assignment.js";
-import Class from "../models/Class.js";
 import Enrollment from "../models/Enrollment.js";
+import User from "../models/User.js";
 
 // Assessments (not homework) unlock once a student has had this many
-// classes. Counted as classes already past their scheduled time, since
-// there's no Teacher UI yet to manually mark a class "completed" — a class
-// that already happened is a reasonable stand-in until Phase 6.
-const ASSESSMENT_UNLOCK_AFTER_CLASSES = 10;
-
-async function countPastClasses(studentId) {
-  return Class.countDocuments({ students: studentId, scheduledAt: { $lt: new Date() } });
-}
+// classes. Driven by User.completedClassCount, written by
+// classController.endClass when a tutor marks a student "present"
+// (ROADMAP.md Phase 13) — replaces the old scheduledAt-based stand-in.
+// Exported so adminController's student aggregation (ROADMAP.md Phase 17)
+// computes the exact same unlock status from a single source of truth,
+// rather than risking a second, silently-drifting copy of "10".
+export const ASSESSMENT_UNLOCK_AFTER_CLASSES = 10;
 
 export async function listAssignments(req, res) {
   try {
@@ -27,7 +26,8 @@ export async function listAssignments(req, res) {
       return;
     }
 
-    const classesCompleted = await countPastClasses(req.user.id);
+    const student = await User.findById(req.user.id).select("completedClassCount").lean();
+    const classesCompleted = student?.completedClassCount ?? 0;
     const assessmentsUnlocked = classesCompleted >= ASSESSMENT_UNLOCK_AFTER_CLASSES;
 
     const homework = await Assignment.find({ student: req.user.id, type: "homework" })

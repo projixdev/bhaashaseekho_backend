@@ -1,10 +1,41 @@
 import { connectDB } from "../config/db.js";
 import Lead from "../models/Lead.js";
+import User from "../models/User.js";
 import { sendTransactionalEmail } from "../services/brevoService.js";
 import { isHoneypotTriggered } from "../utils/honeypot.js";
-import { validateLeadInput, escapeHtml } from "../utils/validation.js";
+import { validateLeadInput, escapeHtml, normalizePhone, PHONE_DIGITS_RE } from "../utils/validation.js";
 import { renderEmailLayout, emailButton, getWhatsAppUrl } from "../services/emailTemplates.js";
 import { env } from "../config/env.js";
+
+const TRIAL_ACCESS_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Creates (or refreshes) a time-limited trial User from a trial-class
+// booking — the website's only other way, besides scripts/createUser.js, to
+// bring a User record into existence (ROADMAP.md Phase 14). Never touches
+// sendOtp's "unenrolled number" rejection: an unknown number is still
+// rejected there exactly as before, this just adds a second, separately
+// rate-limited path (same "leads" bucket as the rest of this endpoint) by
+// which a number stops being unknown.
+async function upsertTrialUser({ phone, email, name, trialClassAt }) {
+  const normalizedPhone = normalizePhone(phone);
+  if (!PHONE_DIGITS_RE.test(normalizedPhone)) return null;
+
+  const existing = await User.findOne({ phone: normalizedPhone });
+  if (existing && !existing.isTrial) {
+    // Never downgrade a real, already-enrolled account into an expiring
+    // trial just because the same phone number re-submitted this form.
+    console.warn(`Trial booking skipped — ${normalizedPhone} already belongs to a non-trial account.`);
+    return null;
+  }
+
+  const user = existing ?? new User({ phone: normalizedPhone, role: "student" });
+  user.isTrial = true;
+  user.accessExpiresAt = new Date(trialClassAt.getTime() + TRIAL_ACCESS_WINDOW_MS);
+  user.email = email;
+  if (!user.name) user.name = name;
+  await user.save();
+  return user;
+}
 
 function buildOwnerEmailHtml(body) {
   const inner = `
@@ -51,6 +82,28 @@ export async function postLead(req, res) {
       return;
     }
 
+    // trialClassAt marks this submission as a trial-class booking rather
+    // than a general inquiry — same form/endpoint, additive behavior only
+    // (ROADMAP.md Phase 14). Validated up front so a malformed trial
+    // booking fails fast with a clear 400 instead of silently saving a lead
+    // nobody can ever log in to see.
+    let trialClassAt = null;
+    if (body.trialClassAt) {
+      trialClassAt = new Date(body.trialClassAt);
+      if (Number.isNaN(trialClassAt.getTime())) {
+        res.status(400).json({ success: false, errors: { trialClassAt: "Invalid trial class date/time." } });
+        return;
+      }
+      if (!body.email || typeof body.email !== "string" || !body.email.trim()) {
+        res.status(400).json({ success: false, errors: { email: "Email is required to book a trial class." } });
+        return;
+      }
+      if (!PHONE_DIGITS_RE.test(normalizePhone(body.phone))) {
+        res.status(400).json({ success: false, errors: { phone: "A valid phone number is required to book a trial class." } });
+        return;
+      }
+    }
+
     // Saving the lead is the critical path — if this fails, the request
     // fails, because the lead is genuinely lost otherwise.
     await connectDB();
@@ -63,6 +116,22 @@ export async function postLead(req, res) {
       utmMedium: (body.utmMedium || "").trim(),
       utmCampaign: (body.utmCampaign || "").trim(),
     });
+
+    // Best-effort, same rationale as the emails below: the lead itself is
+    // already safely saved, so a hiccup here shouldn't fail the request —
+    // worst case the founder re-runs scripts/createUser.js for this number.
+    if (trialClassAt) {
+      try {
+        await upsertTrialUser({
+          phone: body.phone,
+          email: body.email.trim().toLowerCase(),
+          name: body.name.trim(),
+          trialClassAt,
+        });
+      } catch (trialErr) {
+        console.error("Trial user creation failed for lead:", trialErr);
+      }
+    }
 
     // Both emails are best-effort: the lead is already safely in MongoDB, so
     // a failed send shouldn't fail the request.

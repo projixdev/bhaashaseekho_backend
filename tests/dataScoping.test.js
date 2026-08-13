@@ -2,8 +2,12 @@
 // Phase 12 kickoff explanation: no literal "student-only" route exists) —
 // both roles hit the same endpoint and get role-branched, ownership-scoped
 // data back rather than a 403. This file proves the scoping itself, plus the
-// assessment gate (countPastClasses in assignmentController.js), which is
+// assessment gate (User.completedClassCount, ROADMAP.md Phase 13), which is
 // separate business logic from the role/ownership checks in roleIsolation.test.js.
+// The gate itself is driven purely by completedClassCount, written by
+// classController.endClass — see endClass.test.js for how that count gets
+// there; this file seeds it directly since the gate threshold is what's
+// under test here, not the End Class flow.
 import { jest } from "@jest/globals";
 import request from "supertest";
 import { connectTestDB, clearTestDB, disconnectTestDB } from "./helpers/db.js";
@@ -23,7 +27,6 @@ afterEach(clearTestDB);
 afterAll(disconnectTestDB);
 
 const inOneDay = () => new Date(Date.now() + 24 * 60 * 60 * 1000);
-const daysAgo = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
 
 describe("GET /api/classes scoping", () => {
   test("student sees only their own class; teacher sees only classes they teach; unrelated party's class never leaks", async () => {
@@ -63,17 +66,11 @@ describe("GET /api/assignments scoping", () => {
     expect(asStudentA.body.homework[0]._id).toBe(assignmentA._id.toString());
   });
 
-  test("assessment gate: 9 past classes → locked and omitted; 10 → unlocked and returned", async () => {
+  test("assessment gate: completedClassCount 9 → locked and omitted; 10 → unlocked and returned", async () => {
     const teacher = await createTeacher();
-    const lockedStudent = await createStudent();
-    const unlockedStudent = await createStudent();
+    const lockedStudent = await createStudent({ completedClassCount: 9 });
+    const unlockedStudent = await createStudent({ completedClassCount: 10 });
 
-    for (let i = 0; i < 9; i++) {
-      await createClass({ tutor: teacher, students: [lockedStudent], scheduledAt: daysAgo(i + 1) });
-    }
-    for (let i = 0; i < 10; i++) {
-      await createClass({ tutor: teacher, students: [unlockedStudent], scheduledAt: daysAgo(i + 1) });
-    }
     await createAssignmentDoc({ student: lockedStudent, tutor: teacher, type: "assessment", title: "Assessment" });
     await createAssignmentDoc({ student: lockedStudent, tutor: teacher, type: "homework", title: "Homework" });
     await createAssignmentDoc({ student: unlockedStudent, tutor: teacher, type: "assessment", title: "Assessment" });
