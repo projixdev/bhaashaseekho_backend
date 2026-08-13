@@ -30,6 +30,16 @@ function isTrialExpired(user) {
   return Boolean(user.isTrial && user.accessExpiresAt && user.accessExpiresAt.getTime() < Date.now());
 }
 
+// Masked server-side, not client-side — the raw email never goes over the
+// wire at all, not even to a trusted client. Fixed "***" (not proportional
+// to local-part length) so the result stays visually consistent regardless
+// of how long the address is.
+function maskEmail(email) {
+  const [local, domain] = email.split("@");
+  if (!domain || local.length === 0) return email;
+  return `${local[0]}***@${domain}`;
+}
+
 // Reuses the shared Brevo layout (services/emailTemplates.js) — same
 // branding as the lead/contact notification emails, just a different body.
 function buildOtpEmailHtml(otp) {
@@ -108,6 +118,9 @@ export async function sendOtp(req, res) {
 
     res.json({
       success: true,
+      // Lets the app confirm where the code went (login.tsx, ROADMAP.md
+      // login-screen polish) — masked, see maskEmail above.
+      email: maskEmail(user.email),
       // devOtp keeps local/dev testing independent of Brevo actually
       // delivering — surfaced only outside production. Remove once email
       // delivery is proven reliable enough to depend on exclusively.

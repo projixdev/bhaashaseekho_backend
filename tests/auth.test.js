@@ -59,6 +59,14 @@ describe("send-otp", () => {
     expect(stored.otpHash).toBeTruthy();
     expect(stored.otpExpiresAt.getTime()).toBeGreaterThan(Date.now());
   });
+
+  test("response includes the masked email the code was sent to (login-screen copy), never the raw address", async () => {
+    const student = await createStudent({ email: "vijaykalyan3081@gmail.com" });
+    const res = await sendOtp(student.phone);
+    expect(res.status).toBe(200);
+    expect(res.body.email).toBe("v***@gmail.com");
+    expect(JSON.stringify(res.body)).not.toContain("vijaykalyan3081");
+  });
 });
 
 describe("verify-otp", () => {
