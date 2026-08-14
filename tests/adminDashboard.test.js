@@ -217,11 +217,99 @@ describe("GET /api/admin/students", () => {
     expect(res.status).toBe(200);
     const row = res.body.students.find((s) => s.name === "Priya");
     expect(row.completedClassCount).toBe(10);
+    expect(row.assessmentsUnlockAt).toBe(10);
     expect(row.assessmentsUnlocked).toBe(true);
     expect(row.homework).toEqual({ assigned: 2, submitted: 1 });
     expect(row.assessments).toEqual({ assigned: 1, submitted: 0 });
+    // homework has one still-"assigned" item -> overall status is "pending"
+    // even though the assessment (submitted count 0 of 1... wait, A1 is
+    // freshly created so it's "assigned" too) — both types have an
+    // outstanding item, so pending is the only correct overall status here.
+    expect(row.assignmentStatus).toBe("pending");
     expect(row.isTrial).toBe(true);
     expect(row.accessExpiresAt).toBeTruthy();
+  });
+
+  test("teachers[] lists every active enrollment's tutor, one per course, for students with more than one", async () => {
+    const { user: admin } = await createAdminUser();
+    const kannadaTeacher = await createTeacher({ name: "Sudi" });
+    const hindiTeacher = await createTeacher({ name: "Pawan" });
+    const student = await createStudent({ name: "Multi Course" });
+    await createEnrollment({ student, tutor: kannadaTeacher, courseSlug: "kannada" });
+    await createEnrollment({ student, tutor: hindiTeacher, courseSlug: "hindi" });
+
+    const res = await request(app).get("/api/admin/students").set("Authorization", `Bearer ${signAdminToken(admin)}`);
+    const row = res.body.students.find((s) => s.name === "Multi Course");
+    expect(row.teachers).toHaveLength(2);
+    expect(row.teachers).toEqual(
+      expect.arrayContaining([
+        { courseSlug: "kannada", name: "Sudi" },
+        { courseSlug: "hindi", name: "Pawan" },
+      ])
+    );
+  });
+
+  test("teachers[] is empty for a student with no active enrollment", async () => {
+    const { user: admin } = await createAdminUser();
+    await createStudent({ name: "No Enrollment" });
+
+    const res = await request(app).get("/api/admin/students").set("Authorization", `Bearer ${signAdminToken(admin)}`);
+    const row = res.body.students.find((s) => s.name === "No Enrollment");
+    expect(row.teachers).toEqual([]);
+  });
+
+  describe("assignmentStatus priority (pending > submitted > reviewed > none)", () => {
+    test("no assignments at all -> \"none\"", async () => {
+      const { user: admin } = await createAdminUser();
+      await createStudent({ name: "Zero Assignments" });
+
+      const res = await request(app).get("/api/admin/students").set("Authorization", `Bearer ${signAdminToken(admin)}`);
+      const row = res.body.students.find((s) => s.name === "Zero Assignments");
+      expect(row.assignmentStatus).toBe("none");
+    });
+
+    test("everything reviewed, nothing outstanding -> \"reviewed\"", async () => {
+      const { user: admin } = await createAdminUser();
+      const teacher = await createTeacher();
+      const student = await createStudent({ name: "All Reviewed" });
+      const hw = await createAssignmentDoc({ student, tutor: teacher, type: "homework", title: "HW" });
+      hw.status = "reviewed";
+      await hw.save();
+
+      const res = await request(app).get("/api/admin/students").set("Authorization", `Bearer ${signAdminToken(admin)}`);
+      const row = res.body.students.find((s) => s.name === "All Reviewed");
+      expect(row.assignmentStatus).toBe("reviewed");
+    });
+
+    test("at least one submitted, nothing still pending -> \"submitted\"", async () => {
+      const { user: admin } = await createAdminUser();
+      const teacher = await createTeacher();
+      const student = await createStudent({ name: "Awaiting Review" });
+      const reviewed = await createAssignmentDoc({ student, tutor: teacher, type: "homework", title: "HW1" });
+      reviewed.status = "reviewed";
+      await reviewed.save();
+      const submitted = await createAssignmentDoc({ student, tutor: teacher, type: "assessment", title: "A1" });
+      submitted.status = "submitted";
+      await submitted.save();
+
+      const res = await request(app).get("/api/admin/students").set("Authorization", `Bearer ${signAdminToken(admin)}`);
+      const row = res.body.students.find((s) => s.name === "Awaiting Review");
+      expect(row.assignmentStatus).toBe("submitted");
+    });
+
+    test("at least one still \"assigned\" outranks submitted/reviewed -> \"pending\"", async () => {
+      const { user: admin } = await createAdminUser();
+      const teacher = await createTeacher();
+      const student = await createStudent({ name: "Has Pending" });
+      const reviewed = await createAssignmentDoc({ student, tutor: teacher, type: "homework", title: "HW1" });
+      reviewed.status = "reviewed";
+      await reviewed.save();
+      await createAssignmentDoc({ student, tutor: teacher, type: "assessment", title: "A1" }); // stays "assigned"
+
+      const res = await request(app).get("/api/admin/students").set("Authorization", `Bearer ${signAdminToken(admin)}`);
+      const row = res.body.students.find((s) => s.name === "Has Pending");
+      expect(row.assignmentStatus).toBe("pending");
+    });
   });
 
   test("a legacy record missing completedClassCount/isTrial entirely (pre-dates those fields) shows 0/false, not an omitted key", async () => {

@@ -170,6 +170,19 @@ export async function listAdminTeachers(req, res) {
   }
 }
 
+// Priority order matters: a student with even one still-"assigned" item is
+// "pending" (something outstanding) even if everything else is reviewed;
+// "submitted" only once nothing is left pending; "reviewed" only once
+// nothing is left pending or awaiting review. Computed across homework and
+// assessments together — the admin Students page wants one overall status
+// per student, not a separate badge per assignment type.
+function overallAssignmentStatus(items) {
+  if (items.length === 0) return "none";
+  if (items.some((a) => a.status === "assigned")) return "pending";
+  if (items.some((a) => a.status === "submitted")) return "submitted";
+  return "reviewed";
+}
+
 export async function listAdminStudents(req, res) {
   try {
     await connectDB();
@@ -180,7 +193,17 @@ export async function listAdminStudents(req, res) {
       .lean();
     const studentIds = students.map((s) => s._id);
 
-    const assignments = await Assignment.find({ student: { $in: studentIds } }).select("student type status").lean();
+    const [assignments, enrollments] = await Promise.all([
+      Assignment.find({ student: { $in: studentIds } }).select("student type status").lean(),
+      // Active enrollments only — same "currently assigned" definition
+      // listAdminTeachers already uses. populate("tutor", "name") since a
+      // student can have a different tutor per course and the page needs
+      // to show all of them, not just one.
+      Enrollment.find({ student: { $in: studentIds }, status: "active" })
+        .select("student courseSlug tutor")
+        .populate("tutor", "name")
+        .lean(),
+    ]);
 
     const result = students.map((s) => {
       const idStr = s._id.toString();
@@ -200,9 +223,17 @@ export async function listAdminStudents(req, res) {
         // actually written, so the key is missing outright, not 0/false.
         // Same fallback assignmentController.js's gate already relies on.
         completedClassCount: s.completedClassCount ?? 0,
+        // Exposed explicitly rather than leaving the admin UI to hardcode
+        // "10" — same constant the real student-facing gate reads from, not
+        // a second copy of the threshold.
+        assessmentsUnlockAt: ASSESSMENT_UNLOCK_AFTER_CLASSES,
         assessmentsUnlocked: (s.completedClassCount ?? 0) >= ASSESSMENT_UNLOCK_AFTER_CLASSES,
         homework: bucket("homework"),
         assessments: bucket("assessment"),
+        assignmentStatus: overallAssignmentStatus(own),
+        teachers: enrollments
+          .filter((e) => e.student.toString() === idStr)
+          .map((e) => ({ courseSlug: e.courseSlug, name: e.tutor?.name ?? null })),
         isTrial: Boolean(s.isTrial),
         accessExpiresAt: s.isTrial ? s.accessExpiresAt : null,
       };
