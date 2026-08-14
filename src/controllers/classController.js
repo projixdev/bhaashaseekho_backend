@@ -1,5 +1,6 @@
 import { connectDB } from "../config/db.js";
 import Class from "../models/Class.js";
+import Enrollment from "../models/Enrollment.js";
 import User from "../models/User.js";
 
 // Students see classes they're enrolled in; teachers see classes they teach.
@@ -34,6 +35,54 @@ export async function listUpcomingClasses(req, res) {
     res.json({ success: true, classes });
   } catch (err) {
     console.error("GET /api/classes failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// App-flow counterpart to scripts/scheduleClass.js, now that a teacher can
+// do this themselves instead of asking an admin to run the CLI script.
+// Mirrors the script's exact creation logic/defaults (durationMinutes 45,
+// meetingLink left empty — Zoom integration is on hold) — the only real
+// difference is the ownership check, which the CLI script skips since
+// whoever runs it is trusted, but an HTTP endpoint can't assume that.
+export async function createClass(req, res) {
+  try {
+    const { studentId, subject, scheduledAt, durationMinutes } = req.body;
+
+    if (!studentId || typeof subject !== "string" || !subject.trim() || !scheduledAt) {
+      res.status(400).json({ success: false, message: "studentId, subject, and scheduledAt are required." });
+      return;
+    }
+
+    const parsedScheduledAt = new Date(scheduledAt);
+    if (Number.isNaN(parsedScheduledAt.getTime())) {
+      res.status(400).json({ success: false, message: "Invalid scheduledAt date." });
+      return;
+    }
+
+    await connectDB();
+
+    // Only students on this teacher's own roster — same check/message as
+    // assignmentController.createAssignment.
+    const enrollment = await Enrollment.findOne({ tutor: req.user.id, student: studentId });
+    if (!enrollment) {
+      res.status(403).json({ success: false, message: "This student isn't assigned to you." });
+      return;
+    }
+
+    const cls = await Class.create({
+      subject: subject.trim(),
+      tutor: req.user.id,
+      students: [studentId],
+      batchType: "1-on-1",
+      scheduledAt: parsedScheduledAt,
+      durationMinutes: durationMinutes ? Number(durationMinutes) : 45,
+      meetingLink: "",
+    });
+
+    res.json({ success: true, class: cls });
+  } catch (err) {
+    console.error("POST /api/classes failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }

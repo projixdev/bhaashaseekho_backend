@@ -151,7 +151,16 @@ export async function reviewAssignment(req, res) {
       return;
     }
 
-    assignment.score = typeof req.body.score === "string" ? req.body.score : "";
+    // "Reviewed" implies graded, not just looked at — parents/students would
+    // otherwise see a reviewed assignment with no score and assume it's a
+    // bug. Require one up front rather than allowing an ambiguous state.
+    const score = typeof req.body.score === "string" ? req.body.score.trim() : "";
+    if (!score) {
+      res.status(400).json({ success: false, message: "A score is required to mark this assignment reviewed." });
+      return;
+    }
+
+    assignment.score = score;
     assignment.status = "reviewed";
     await assignment.save();
 

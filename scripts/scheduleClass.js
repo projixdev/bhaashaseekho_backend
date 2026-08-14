@@ -1,7 +1,12 @@
 // Admin-only tool — schedules a Class session directly in MongoDB. Run
-// locally with your own .env; never exposed over HTTP. This is how classes
-// get on the calendar until Teacher UI (ROADMAP.md Phase 6) can do it from
-// the app itself.
+// locally with your own .env; never exposed over HTTP.
+//
+// This is no longer the primary way to schedule a class — a teacher can now
+// do it themselves from the app (POST /api/classes,
+// classController.createClass). This script is kept as a fallback/emergency
+// tool (e.g. bulk-scheduling, or scheduling on a teacher's behalf) and still
+// works exactly as before, including multi-student/group batches, which the
+// app's simpler single-student picker doesn't expose yet.
 //
 // Usage:
 //   node scripts/scheduleClass.js --tutor 9876543210 --students 9123456789 --subject "Hindi Conversation" --at "2026-08-15T18:00" --duration 60 --link https://meet.google.com/xyz
