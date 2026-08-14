@@ -1,4 +1,7 @@
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Exported: as of adminController.createTeacher, this is used in three
+// places (here, createUser.js's own local copy, and adminController.js) —
+// past the point where a third silent duplicate is worth it.
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function requiredString(value) {
   return typeof value === "string" && value.trim().length > 0;

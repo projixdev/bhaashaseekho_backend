@@ -5,6 +5,13 @@
 // itself) and how teacher accounts get created, since neither role can
 // self-register through the app's OTP login.
 //
+// --role teacher is no longer the primary way to create a teacher — the
+// admin dashboard's "Add Teacher" form (POST /api/admin/teachers,
+// adminController.createTeacher) is, as of ROADMAP.md's admin-dashboard
+// rebuild. This script is kept as a fallback/emergency tool (e.g. the
+// dashboard is down, or you're scripting a bulk import) and still works
+// exactly as before — student creation/enrollment is untouched either way.
+//
 // Usage:
 //   node scripts/createUser.js --phone 9876543210 --name "Priya Nair" --role teacher --email priya@example.com
 //   node scripts/createUser.js --phone 9123456789 --name "Rohan K" --role student --email rohan@example.com --course hindi --tutor 9876543210 --batch group

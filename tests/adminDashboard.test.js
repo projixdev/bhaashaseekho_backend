@@ -97,6 +97,95 @@ describe("GET /api/admin/teachers", () => {
   });
 });
 
+describe("POST /api/admin/teachers", () => {
+  function createTeacherReq(body, token) {
+    return request(app).post("/api/admin/teachers").set("Authorization", `Bearer ${token}`).send(body);
+  }
+
+  test("valid creation → 201, same shape a CLI-created teacher would have", async () => {
+    const { user: admin } = await createAdminUser();
+    const res = await createTeacherReq(
+      { name: "New Teacher", phone: "9800000201", email: "newteacher@example.com" },
+      signAdminToken(admin)
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.body.teacher).toMatchObject({ name: "New Teacher", phone: "9800000201", email: "newteacher@example.com" });
+
+    const stored = await User.findOne({ phone: "9800000201" }).select("+password");
+    expect(stored.role).toBe("teacher");
+    expect(stored.isAdmin).toBe(false);
+    expect(stored.password).toBeUndefined();
+  });
+
+  test("email is optional, matching createUser.js's --role teacher behavior", async () => {
+    const { user: admin } = await createAdminUser();
+    const res = await createTeacherReq({ name: "No Email Teacher", phone: "9800000202" }, signAdminToken(admin));
+    expect(res.status).toBe(201);
+    expect(res.body.teacher.email).toBeNull();
+  });
+
+  test("duplicate phone → 409, no second user created", async () => {
+    const { user: admin } = await createAdminUser();
+    const existing = await createTeacher({ phone: "9800000203" });
+
+    const res = await createTeacherReq({ name: "Someone Else", phone: "9800000203" }, signAdminToken(admin));
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe("This phone number is already registered.");
+
+    expect(await User.countDocuments({ phone: "9800000203" })).toBe(1);
+    expect((await User.findById(existing._id)).name).toBe(existing.name); // untouched, not overwritten
+  });
+
+  test("duplicate email (different phone) → 409 with an email-specific message", async () => {
+    const { user: admin } = await createAdminUser();
+    await createTeacher({ phone: "9800000204", email: "shared@example.com" });
+
+    const res = await createTeacherReq(
+      { name: "Someone Else", phone: "9800000205", email: "shared@example.com" },
+      signAdminToken(admin)
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe("This email is already registered to another account.");
+  });
+
+  test("missing name → 400", async () => {
+    const { user: admin } = await createAdminUser();
+    const res = await createTeacherReq({ phone: "9800000206" }, signAdminToken(admin));
+    expect(res.status).toBe(400);
+    expect(res.body.errors.name).toBeTruthy();
+  });
+
+  test("missing/invalid phone → 400", async () => {
+    const { user: admin } = await createAdminUser();
+    const res = await createTeacherReq({ name: "Bad Phone" }, signAdminToken(admin));
+    expect(res.status).toBe(400);
+    expect(res.body.errors.phone).toBeTruthy();
+  });
+
+  test("invalid email format → 400", async () => {
+    const { user: admin } = await createAdminUser();
+    const res = await createTeacherReq(
+      { name: "Bad Email", phone: "9800000207", email: "not-an-email" },
+      signAdminToken(admin)
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.errors.email).toBeTruthy();
+  });
+
+  test("no token → 401", async () => {
+    const res = await request(app).post("/api/admin/teachers").send({ name: "X", phone: "9800000208" });
+    expect(res.status).toBe(401);
+  });
+
+  test("non-admin token → 403", async () => {
+    const teacher = await createTeacher();
+    const res = await createTeacherReq({ name: "X", phone: "9800000209" }, signToken(teacher));
+    expect(res.status).toBe(403);
+    expect(await User.findOne({ phone: "9800000209" })).toBeNull();
+  });
+});
+
 describe("GET /api/admin/students", () => {
   test("no token → 401", async () => {
     const res = await request(app).get("/api/admin/students");

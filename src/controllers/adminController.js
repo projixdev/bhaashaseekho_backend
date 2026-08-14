@@ -7,6 +7,7 @@ import Enrollment from "../models/Enrollment.js";
 import Class from "../models/Class.js";
 import Assignment from "../models/Assignment.js";
 import { ASSESSMENT_UNLOCK_AFTER_CLASSES } from "./assignmentController.js";
+import { validatePhoneInput, normalizePhone, EMAIL_RE } from "../utils/validation.js";
 
 // Password-based, web-only login for the admin dashboard (ROADMAP.md Phase
 // 17) — a second way to authenticate the *same* isAdmin: true User the
@@ -50,6 +51,83 @@ export async function adminLogin(req, res) {
     res.json({ success: true, token, user: { id: user._id, name: user.name, email: user.email } });
   } catch (err) {
     console.error("POST /api/admin/login failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Moves teacher creation off scripts/createUser.js and into the admin
+// dashboard — same fields/defaults as that script's --role teacher path
+// (name, phone, role: "teacher", email if given, no password, no
+// Enrollment — that block is student-only there too), so a
+// dashboard-created teacher is indistinguishable from a CLI-created one.
+// One deliberate difference: the script upserts by phone (safe to re-run);
+// this route rejects a duplicate phone outright rather than silently
+// overwriting an existing account from a web form.
+export async function createTeacher(req, res) {
+  try {
+    const { name, phone, email } = req.body;
+    const errors = {};
+
+    if (typeof name !== "string" || !name.trim()) {
+      errors.name = "Name is required.";
+    } else if (name.trim().length > 120) {
+      errors.name = "Name is too long.";
+    }
+
+    // Reuses send-otp's own phone-format check (utils/validation.js) rather
+    // than a second copy of the same regex.
+    const { valid: phoneValid, errors: phoneErrors } = validatePhoneInput({ phone });
+    if (!phoneValid) Object.assign(errors, phoneErrors);
+
+    if (email !== undefined && email !== null && email !== "") {
+      if (typeof email !== "string" || !EMAIL_RE.test(email.trim())) {
+        errors.email = "Please enter a valid email address.";
+      } else if (email.trim().length > 160) {
+        errors.email = "Email is too long.";
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      res.status(400).json({ success: false, errors });
+      return;
+    }
+
+    await connectDB();
+
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedEmail = email ? email.trim().toLowerCase() : undefined;
+
+    let teacher;
+    try {
+      teacher = await User.create({
+        phone: normalizedPhone,
+        name: name.trim(),
+        role: "teacher",
+        ...(normalizedEmail ? { email: normalizedEmail } : {}),
+      });
+    } catch (err) {
+      if (err.code === 11000) {
+        // phone and email are both unique-indexed — report whichever one
+        // actually collided instead of assuming it was the phone.
+        const field = err.keyPattern?.email ? "email" : "phone";
+        res.status(409).json({
+          success: false,
+          message:
+            field === "email"
+              ? "This email is already registered to another account."
+              : "This phone number is already registered.",
+        });
+        return;
+      }
+      throw err;
+    }
+
+    res.status(201).json({
+      success: true,
+      teacher: { _id: teacher._id, name: teacher.name, phone: teacher.phone, email: teacher.email || null },
+    });
+  } catch (err) {
+    console.error("POST /api/admin/teachers failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }

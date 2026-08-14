@@ -2,7 +2,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/requireAuth.js";
 import { requireAdmin } from "../middleware/requireAdmin.js";
 import { rateLimit } from "../middleware/rateLimit.js";
-import { adminLogin, listAdminTeachers, listAdminStudents } from "../controllers/adminController.js";
+import { adminLogin, listAdminTeachers, listAdminStudents, createTeacher } from "../controllers/adminController.js";
 
 const router = Router();
 
@@ -13,6 +13,7 @@ router.post("/login", rateLimit("admin-login"), adminLogin);
 
 // requireAdmin already exists (Phase 15) — reused as-is, not duplicated.
 router.get("/teachers", requireAuth, requireAdmin, listAdminTeachers);
+router.post("/teachers", requireAuth, requireAdmin, createTeacher);
 router.get("/students", requireAuth, requireAdmin, listAdminStudents);
 
 export default router;
