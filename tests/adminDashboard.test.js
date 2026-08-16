@@ -24,9 +24,13 @@ jest.unstable_mockModule("../src/services/brevoService.js", () => ({
 
 const { default: app } = await import("../src/app.js");
 const { default: User } = await import("../src/models/User.js");
+const { sendTransactionalEmail } = await import("../src/services/brevoService.js");
 
 beforeAll(connectTestDB);
-afterEach(clearTestDB);
+afterEach(() => {
+  sendTransactionalEmail.mockClear();
+  return clearTestDB();
+});
 afterAll(disconnectTestDB);
 
 function adminLogin(body) {
@@ -123,6 +127,29 @@ describe("POST /api/admin/teachers", () => {
     const res = await createTeacherReq({ name: "No Email Teacher", phone: "9800000202" }, signAdminToken(admin));
     expect(res.status).toBe(201);
     expect(res.body.teacher.email).toBeNull();
+  });
+
+  test("with an email → a welcome email is sent to the new teacher explaining how to log in", async () => {
+    const { user: admin } = await createAdminUser();
+    const res = await createTeacherReq(
+      { name: "Priya Nair", phone: "9800000210", email: "priya.welcome@example.com" },
+      signAdminToken(admin)
+    );
+    expect(res.status).toBe(201);
+
+    expect(sendTransactionalEmail).toHaveBeenCalledTimes(1);
+    const call = sendTransactionalEmail.mock.calls[0][0];
+    expect(call.to).toBe("priya.welcome@example.com");
+    expect(call.subject).toMatch(/welcome/i);
+    expect(call.htmlContent).toContain("9800000210"); // login phone number
+    expect(call.htmlContent).toContain("Priya Nair");
+  });
+
+  test("without an email → no welcome email attempted (nowhere to send it)", async () => {
+    const { user: admin } = await createAdminUser();
+    const res = await createTeacherReq({ name: "No Email Teacher", phone: "9800000211" }, signAdminToken(admin));
+    expect(res.status).toBe(201);
+    expect(sendTransactionalEmail).not.toHaveBeenCalled();
   });
 
   test("duplicate phone → 409, no second user created", async () => {

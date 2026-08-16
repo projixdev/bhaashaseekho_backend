@@ -7,7 +7,7 @@ import Enrollment from "../models/Enrollment.js";
 import Class from "../models/Class.js";
 import Assignment from "../models/Assignment.js";
 import { ASSESSMENT_UNLOCK_AFTER_CLASSES } from "./assignmentController.js";
-import { validatePhoneInput, normalizePhone, EMAIL_RE } from "../utils/validation.js";
+import { validatePhoneInput, normalizePhone, EMAIL_RE, escapeHtml } from "../utils/validation.js";
 
 // Password-based, web-only login for the admin dashboard (ROADMAP.md Phase
 // 17) — a second way to authenticate the *same* isAdmin: true User the
@@ -71,6 +71,58 @@ function respondDuplicateKeyError(err, res) {
   return true;
 }
 
+// Shared by both createTeacher (below) and scripts/createUser.js's
+// --role teacher path — "any teacher profile" gets the same welcome email
+// regardless of which one created it, so this isn't duplicated between
+// them. Best-effort, same rationale as every other transactional email in
+// this app: the account is already safely created, so a delivery hiccup
+// here shouldn't be treated as the creation itself having failed.
+export async function buildTeacherWelcomeEmailHtml(teacher) {
+  const { renderEmailLayout, emailButton, getWhatsAppUrl } = await import("../services/emailTemplates.js");
+  const whatsappUrl = getWhatsAppUrl();
+
+  const inner = `
+    <p style="margin:0 0 20px;">Hi ${escapeHtml(teacher.name)}, you've been added as a teacher on Bhaasha Seekho! Here's how to get started:</p>
+    <ol style="margin:0 0 20px; padding-left:20px;">
+      <li style="margin-bottom:8px;">Open the Bhaasha Seekho app and log in with your phone number: <strong>${escapeHtml(teacher.phone)}</strong>.</li>
+      <li style="margin-bottom:8px;">We'll email a one-time code to this address each time you log in — no password to remember or lose.</li>
+      <li>From there you'll see your student roster, can schedule classes, and assign/review homework.</li>
+    </ol>
+    <p style="margin:0 0 20px;">Questions before your first class? Just reply to this email or reach out below.</p>
+    ${whatsappUrl ? `<p style="margin:0 0 8px;">${emailButton("Chat on WhatsApp", whatsappUrl)}</p>` : ""}
+    <p style="margin:24px 0 0;">— The Bhaasha Seekho Team</p>
+  `;
+  return renderEmailLayout({
+    preheader: "You've been added as a teacher on Bhaasha Seekho — here's how to log in.",
+    eyebrow: "Welcome",
+    heading: "You're a Teacher Now",
+    bodyHtml: inner,
+  });
+}
+
+// Dynamic imports (not static top-level ones) for brevoService/
+// emailTemplates here are deliberate, not stylistic — a static import of
+// brevoService.js specifically from this file breaks Jest's
+// unstable_mockModule identity for *other* files that also import it
+// (reproduced directly: tests/auth.test.js's own mocked
+// sendTransactionalEmail stopped receiving calls the moment this file
+// statically imported the same module, with nothing else changed).
+// Deferring both imports to call time avoids whatever import-graph-order
+// issue causes that, without changing any other file's behavior.
+export async function sendTeacherWelcomeEmail(teacher) {
+  if (!teacher.email) return;
+  try {
+    const { sendTransactionalEmail } = await import("../services/brevoService.js");
+    await sendTransactionalEmail({
+      to: teacher.email,
+      subject: "Welcome to Bhaasha Seekho — how to log in",
+      htmlContent: await buildTeacherWelcomeEmailHtml(teacher),
+    });
+  } catch (err) {
+    console.error("Teacher welcome email failed:", err);
+  }
+}
+
 // Moves teacher creation off scripts/createUser.js and into the admin
 // dashboard — same fields/defaults as that script's --role teacher path
 // (name, phone, role: "teacher", email if given, no password, no
@@ -125,6 +177,8 @@ export async function createTeacher(req, res) {
       if (respondDuplicateKeyError(err, res)) return;
       throw err;
     }
+
+    await sendTeacherWelcomeEmail(teacher);
 
     res.status(201).json({
       success: true,

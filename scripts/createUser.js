@@ -28,6 +28,7 @@ import { connectDB } from "../src/config/db.js";
 import User from "../src/models/User.js";
 import Enrollment from "../src/models/Enrollment.js";
 import { normalizePhone, PHONE_DIGITS_RE } from "../src/utils/validation.js";
+import { sendTeacherWelcomeEmail } from "../src/controllers/adminController.js";
 
 // Mirrors the (unexported) pattern in src/utils/validation.js — duplicated
 // rather than exported from there to keep this phase's changes scoped to
@@ -94,6 +95,15 @@ async function main() {
   console.log(
     `${isNew ? "Created" : "Updated"} ${user.role}: ${user.name} (${user.phone})${user.email ? ` <${user.email}>` : " — no email on file, cannot receive OTPs yet"} — id ${user._id}`
   );
+
+  // Same welcome email a dashboard-created teacher gets (adminController's
+  // createTeacher) — "any teacher profile" should trigger it, not just the
+  // web form. Only on genuine creation, not a re-run that just updates an
+  // existing teacher's name/email.
+  if (isNew && role === "teacher" && user.email) {
+    await sendTeacherWelcomeEmail(user);
+    console.log(`Welcome email sent to ${user.email}.`);
+  }
 
   if (role === "student" && args.course) {
     let tutorId = null;

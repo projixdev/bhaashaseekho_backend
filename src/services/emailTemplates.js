@@ -63,17 +63,20 @@ export function renderEmailLayout({ preheader = "", eyebrow, heading, bodyHtml }
               <td align="center" style="background-color:#4f46e5; background-image:linear-gradient(135deg, #4f46e5 0%, #be185d 100%); padding:${heading ? "36px 32px 40px" : "24px 32px"};">
                 <table role="presentation" cellpadding="0" cellspacing="0">
                   <tr>
-                    <td valign="middle">
+                    <td valign="middle" style="background-color:#ffffff; border-radius:14px; padding:8px;">
+                      <!-- White chip behind the mark, not the image alone —
+                           the logo is thin, colorful linework, which all but
+                           disappears without it against a saturated gradient. -->
                       <img
                         src="https://res.cloudinary.com/p4uypdeo/image/upload/v1786541401/logo.png"
                         alt="${siteMeta.name}"
-                        width="36"
-                        height="36"
-                        style="display:block; border:0; border-radius:8px;"
+                        width="48"
+                        height="48"
+                        style="display:block; border:0;"
                       />
                     </td>
-                    <td valign="middle" style="padding-left:12px;">
-                      <span style="font-family: Arial, Helvetica, sans-serif; font-size:18px; font-weight:bold; color:#ffffff;">${siteMeta.name}</span>
+                    <td valign="middle" style="padding-left:14px;">
+                      <span style="font-family: Arial, Helvetica, sans-serif; font-size:20px; font-weight:bold; color:#ffffff;">${siteMeta.name}</span>
                     </td>
                   </tr>
                 </table>
