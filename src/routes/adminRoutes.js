@@ -16,6 +16,7 @@ import {
   deleteStudent,
   createEnrollment,
   reassignEnrollmentTutor,
+  deleteEnrollment,
 } from "../controllers/adminController.js";
 
 const router = Router();
@@ -40,5 +41,6 @@ router.delete("/students/:id", requireAuth, requireAdmin, deleteStudent);
 router.post("/students/:id/enrollments", requireAuth, requireAdmin, createEnrollment);
 
 router.patch("/enrollments/:id", requireAuth, requireAdmin, reassignEnrollmentTutor);
+router.delete("/enrollments/:id", requireAuth, requireAdmin, deleteEnrollment);
 
 export default router;

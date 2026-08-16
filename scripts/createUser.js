@@ -14,8 +14,14 @@
 //
 // Usage:
 //   node scripts/createUser.js --phone 9876543210 --name "Priya Nair" --role teacher --email priya@example.com
-//   node scripts/createUser.js --phone 9123456789 --name "Rohan K" --role student --email rohan@example.com --course hindi --tutor 9876543210 --batch group
+//   node scripts/createUser.js --phone 9123456789 --name "Rohan K" --role student --email rohan@example.com --course hindi-academics --tutor 9876543210 --batch group
 //
+// --course takes any string as-is (no fixed list enforced here) — the admin
+// dashboard's Add Student form is what actually enforces the real taxonomy
+// (Phase 21: 3 languages x 4 sub-courses, e.g. "hindi-academics",
+// "kannada-speaking" — see bhaashaseekho_website/data/enrollmentCourses.js).
+// Match that format when using this script so a CLI-created enrollment
+// doesn't end up on a slug the dashboard doesn't recognize.
 // --email is optional but should always be passed going forward: OTP
 // delivery is email-only (ROADMAP.md Phase 16) — an account created without
 // one can't receive a login code until an admin re-runs this script with

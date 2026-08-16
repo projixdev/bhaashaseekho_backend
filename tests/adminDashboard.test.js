@@ -152,6 +152,27 @@ describe("POST /api/admin/teachers", () => {
     expect(sendTransactionalEmail).not.toHaveBeenCalled();
   });
 
+  test("languages → 201, stored and returned deduped/lowercased", async () => {
+    const { user: admin } = await createAdminUser();
+    const res = await createTeacherReq(
+      { name: "Multilingual Teacher", phone: "9800000212", languages: ["Hindi", "kannada", "hindi"] },
+      signAdminToken(admin)
+    );
+    expect(res.status).toBe(201);
+    expect(res.body.teacher.languages.sort()).toEqual(["hindi", "kannada"]);
+
+    const stored = await User.findOne({ phone: "9800000212" });
+    expect(stored.languages.sort()).toEqual(["hindi", "kannada"]);
+  });
+
+  test("unknown language → 400, no teacher created", async () => {
+    const { user: admin } = await createAdminUser();
+    const res = await createTeacherReq({ name: "Bad Language Teacher", phone: "9800000213", languages: ["french"] }, signAdminToken(admin));
+    expect(res.status).toBe(400);
+    expect(res.body.errors.languages).toBeTruthy();
+    expect(await User.findOne({ phone: "9800000213" })).toBeNull();
+  });
+
   test("duplicate phone → 409, no second user created", async () => {
     const { user: admin } = await createAdminUser();
     const existing = await createTeacher({ phone: "9800000203" });

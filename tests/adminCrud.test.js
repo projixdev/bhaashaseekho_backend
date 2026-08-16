@@ -114,6 +114,29 @@ describe("PATCH /api/admin/teachers/:id", () => {
     expect((await User.findById(teacher._id)).email).toBe("mine@example.com");
   });
 
+  test("languages → 200, replaces the previous set entirely", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+    await User.findByIdAndUpdate(teacher._id, { languages: ["kannada"] });
+
+    const res = await patchTeacher(teacher._id, { languages: ["hindi", "telugu"] }, token);
+    expect(res.status).toBe(200);
+    expect(res.body.teacher.languages.sort()).toEqual(["hindi", "telugu"]);
+
+    const stored = await User.findById(teacher._id);
+    expect(stored.languages.sort()).toEqual(["hindi", "telugu"]);
+  });
+
+  test("unknown language → 400, previous languages untouched", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+    await User.findByIdAndUpdate(teacher._id, { languages: ["kannada"] });
+
+    const res = await patchTeacher(teacher._id, { languages: ["klingon"] }, token);
+    expect(res.status).toBe(400);
+    expect((await User.findById(teacher._id)).languages).toEqual(["kannada"]);
+  });
+
   test("duplicate phone (another account's) → 409", async () => {
     const token = await adminToken();
     await createTeacher({ phone: "9800000303" });
@@ -359,6 +382,95 @@ describe("POST /api/admin/students", () => {
   test("no token → 401", async () => {
     const res = await request(app).post("/api/admin/students").send(validBody({ phone: "9800000410", email: "x4@example.com" }));
     expect(res.status).toBe(401);
+  });
+
+  // Phase 21: creating a student and enrolling them in one or more courses
+  // (each with its own tutor) in the same submission, instead of a separate
+  // manual "Manage Enrollments" step afterward.
+  test("multi-course-in-one-submit: creates the student and one Enrollment per course, each with its own tutor", async () => {
+    const token = await adminToken();
+    const kannadaTutor = await createTeacher({ name: "Kannada Tutor" });
+    const hindiTutor = await createTeacher({ name: "Hindi Tutor" });
+
+    const res = await createStudentReq(
+      validBody({
+        phone: "9800000501",
+        courses: [
+          { courseSlug: "kannada-speaking", tutorId: kannadaTutor._id.toString() },
+          { courseSlug: "hindi-academics", tutorId: hindiTutor._id.toString() },
+        ],
+      }),
+      token
+    );
+
+    expect(res.status).toBe(201);
+    const student = await User.findOne({ phone: "9800000501" });
+    expect(res.body.enrollments).toHaveLength(2);
+    expect(res.body.enrollments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ courseSlug: "kannada-speaking", tutorId: kannadaTutor._id.toString() }),
+        expect.objectContaining({ courseSlug: "hindi-academics", tutorId: hindiTutor._id.toString() }),
+      ])
+    );
+
+    const stored = await Enrollment.find({ student: student._id }).lean();
+    expect(stored).toHaveLength(2);
+    expect(stored.every((e) => e.status === "active")).toBe(true);
+  });
+
+  test("courses is entirely optional — a student can still be created with none, same as before this phase", async () => {
+    const token = await adminToken();
+    const res = await createStudentReq(validBody({ phone: "9800000502" }), token);
+    expect(res.status).toBe(201);
+    expect(res.body.enrollments).toEqual([]);
+  });
+
+  test("no-tutor-selected-rejection: a course with no tutorId → 400, nothing created", async () => {
+    const token = await adminToken();
+    const res = await createStudentReq(
+      validBody({ phone: "9800000503", courses: [{ courseSlug: "kannada-speaking", tutorId: "" }] }),
+      token
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.errors["courses.0.tutorId"]).toBeTruthy();
+    expect(await User.findOne({ phone: "9800000503" })).toBeNull();
+  });
+
+  test("duplicate-enrollment-rejection: the same courseSlug selected twice in one submission → 400, nothing created", async () => {
+    const token = await adminToken();
+    const tutor1 = await createTeacher();
+    const tutor2 = await createTeacher();
+
+    const res = await createStudentReq(
+      validBody({
+        phone: "9800000504",
+        courses: [
+          { courseSlug: "kannada-speaking", tutorId: tutor1._id.toString() },
+          { courseSlug: "kannada-speaking", tutorId: tutor2._id.toString() },
+        ],
+      }),
+      token
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.errors["courses.1.courseSlug"]).toBeTruthy();
+    expect(await User.findOne({ phone: "9800000504" })).toBeNull();
+    expect(await Enrollment.countDocuments()).toBe(0);
+  });
+
+  test("tutorId pointing at a student, not a teacher → 400, nothing created", async () => {
+    const token = await adminToken();
+    const notATeacher = await createStudent();
+
+    const res = await createStudentReq(
+      validBody({ phone: "9800000505", courses: [{ courseSlug: "kannada-speaking", tutorId: notATeacher._id.toString() }] }),
+      token
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.errors["courses.0.tutorId"]).toBeTruthy();
+    expect(await User.findOne({ phone: "9800000505" })).toBeNull();
   });
 });
 
@@ -721,6 +833,61 @@ describe("PATCH /api/admin/enrollments/:id — reassign tutor (founder-hands-off
     const enrollment = await createEnrollment({ student, tutor: founder });
 
     const res = await request(app).patch(`/api/admin/enrollments/${enrollment._id}`).send({ tutorId: founder._id.toString() });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("DELETE /api/admin/enrollments/:id — Phase 21 Part 4, removing a course", () => {
+  function deleteReq(enrollmentId, token) {
+    return request(app).delete(`/api/admin/enrollments/${enrollmentId}`).set("Authorization", `Bearer ${token}`);
+  }
+
+  test("valid delete → 200, the Enrollment doc is gone", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const tutor = await createTeacher();
+    const enrollment = await createEnrollment({ student, tutor });
+
+    const res = await deleteReq(enrollment._id, token);
+    expect(res.status).toBe(200);
+    expect(await Enrollment.findById(enrollment._id)).toBeNull();
+  });
+
+  test("a student's past classes/assignments are untouched by removing their enrollment", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const tutor = await createTeacher();
+    const enrollment = await createEnrollment({ student, tutor });
+    const pastClass = await createClass({ tutor, students: [student], scheduledAt: new Date(), status: "completed" });
+
+    await deleteReq(enrollment._id, token);
+
+    expect(await Class.findById(pastClass._id)).not.toBeNull();
+  });
+
+  test("unknown enrollment id → 404", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const res = await deleteReq(student._id, token); // not a real enrollment id
+    expect(res.status).toBe(404);
+  });
+
+  test("non-admin token → 403, enrollment untouched", async () => {
+    const student = await createStudent();
+    const tutor = await createTeacher();
+    const enrollment = await createEnrollment({ student, tutor });
+
+    const res = await deleteReq(enrollment._id, signToken(tutor));
+    expect(res.status).toBe(403);
+    expect(await Enrollment.findById(enrollment._id)).not.toBeNull();
+  });
+
+  test("no token → 401", async () => {
+    const student = await createStudent();
+    const tutor = await createTeacher();
+    const enrollment = await createEnrollment({ student, tutor });
+
+    const res = await request(app).delete(`/api/admin/enrollments/${enrollment._id}`);
     expect(res.status).toBe(401);
   });
 });

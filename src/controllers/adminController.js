@@ -71,6 +71,28 @@ function respondDuplicateKeyError(err, res) {
   return true;
 }
 
+// The only 3 languages this business teaches (Phase 21) — used to validate
+// User.languages on teacher create/edit. Deliberately hardcoded here (unlike
+// courseSlug, which stays loose) because this is a closed, small set that's
+// part of the actual data model's own enum, not open-ended content that
+// lives in the website repo.
+const KNOWN_LANGUAGES = ["kannada", "hindi", "telugu"];
+
+function validateLanguages(languages, errors) {
+  if (languages === undefined) return undefined;
+  if (!Array.isArray(languages)) {
+    errors.languages = "Languages must be a list.";
+    return undefined;
+  }
+  const cleaned = [...new Set(languages.map((l) => String(l).trim().toLowerCase()))].filter(Boolean);
+  const invalid = cleaned.filter((l) => !KNOWN_LANGUAGES.includes(l));
+  if (invalid.length > 0) {
+    errors.languages = `Unknown language: ${invalid.join(", ")}.`;
+    return undefined;
+  }
+  return cleaned;
+}
+
 // Shared by both createTeacher (below) and scripts/createUser.js's
 // --role teacher path — "any teacher profile" gets the same welcome email
 // regardless of which one created it, so this isn't duplicated between
@@ -133,7 +155,7 @@ export async function sendTeacherWelcomeEmail(teacher) {
 // overwriting an existing account from a web form.
 export async function createTeacher(req, res) {
   try {
-    const { name, phone, email } = req.body;
+    const { name, phone, email, languages } = req.body;
     const errors = {};
 
     if (typeof name !== "string" || !name.trim()) {
@@ -155,6 +177,8 @@ export async function createTeacher(req, res) {
       }
     }
 
+    const validatedLanguages = validateLanguages(languages, errors);
+
     if (Object.keys(errors).length > 0) {
       res.status(400).json({ success: false, errors });
       return;
@@ -172,6 +196,7 @@ export async function createTeacher(req, res) {
         name: name.trim(),
         role: "teacher",
         ...(normalizedEmail ? { email: normalizedEmail } : {}),
+        ...(validatedLanguages ? { languages: validatedLanguages } : {}),
       });
     } catch (err) {
       if (respondDuplicateKeyError(err, res)) return;
@@ -182,7 +207,7 @@ export async function createTeacher(req, res) {
 
     res.status(201).json({
       success: true,
-      teacher: { _id: teacher._id, name: teacher.name, phone: teacher.phone, email: teacher.email || null },
+      teacher: { _id: teacher._id, name: teacher.name, phone: teacher.phone, email: teacher.email || null, languages: teacher.languages },
     });
   } catch (err) {
     console.error("POST /api/admin/teachers failed:", err);
@@ -210,6 +235,7 @@ async function buildTeacherRows(teachers) {
       name: t.name,
       phone: t.phone,
       email: t.email || null,
+      languages: t.languages ?? [],
       // A doc written before isActive existed never had it persisted at
       // all (missing key, not false) — same fallback pattern already used
       // for completedClassCount/isTrial below, so a legacy account reads
@@ -231,7 +257,7 @@ export async function listAdminTeachers(req, res) {
 
     // Deactivated teachers stay in this list (the dashboard shows them
     // greyed-out via isActive, not removed) — no isActive filter here.
-    const teachers = await User.find({ role: "teacher" }).select("name phone email isActive").sort({ name: 1 }).lean();
+    const teachers = await User.find({ role: "teacher" }).select("name phone email isActive languages").sort({ name: 1 }).lean();
     const result = await buildTeacherRows(teachers);
 
     res.json({ success: true, teachers: result });
@@ -246,7 +272,7 @@ export async function getAdminTeacher(req, res) {
     await connectDB();
 
     const teacher = await User.findOne({ _id: req.params.id, role: "teacher" })
-      .select("name phone email isActive")
+      .select("name phone email isActive languages")
       .lean();
     if (!teacher) {
       res.status(404).json({ success: false, message: "Teacher not found." });
@@ -277,7 +303,7 @@ export async function updateTeacher(req, res) {
       return;
     }
 
-    const { name, phone, email } = req.body;
+    const { name, phone, email, languages } = req.body;
     const errors = {};
 
     if (name !== undefined) {
@@ -295,6 +321,7 @@ export async function updateTeacher(req, res) {
         errors.email = "Email is too long.";
       }
     }
+    const validatedLanguages = validateLanguages(languages, errors);
 
     if (Object.keys(errors).length > 0) {
       res.status(400).json({ success: false, errors });
@@ -309,6 +336,7 @@ export async function updateTeacher(req, res) {
       if (email) $set.email = email.trim().toLowerCase();
       else $unset.email = "";
     }
+    if (validatedLanguages !== undefined) $set.languages = validatedLanguages;
 
     let updated;
     try {
@@ -324,7 +352,14 @@ export async function updateTeacher(req, res) {
 
     res.json({
       success: true,
-      teacher: { _id: updated._id, name: updated.name, phone: updated.phone, email: updated.email || null, isActive: updated.isActive !== false },
+      teacher: {
+        _id: updated._id,
+        name: updated.name,
+        phone: updated.phone,
+        email: updated.email || null,
+        languages: updated.languages ?? [],
+        isActive: updated.isActive !== false,
+      },
     });
   } catch (err) {
     console.error("PATCH /api/admin/teachers/:id failed:", err);
@@ -382,6 +417,40 @@ function validateAccountType(accountType, errors) {
   return accountType;
 }
 
+// courses: [{courseSlug, tutorId}] — optional, Phase 21's multi-course Add
+// Student flow. courseSlug itself isn't checked against a fixed list here,
+// same reasoning as createEnrollment below: the taxonomy (3 languages x 4
+// sub-courses) lives in the website's data/courses.js, and the Add Student
+// form's own cascading dropdown is what keeps the value sane — this just
+// enforces the two things that matter at the data layer: every selected
+// course has a tutor (Part 3: never leave Enrollment.tutor null, requiring a
+// second manual step), and the same course isn't selected twice in one
+// submission (the real unique-index collision this could otherwise hit is
+// still caught defensively where the Enrollments are actually created,
+// below). Errors are keyed "courses.<index>.<field>" so the form can show
+// each bad row inline rather than one generic message.
+function validateCourseSelections(courses, errors) {
+  if (courses === undefined) return [];
+  if (!Array.isArray(courses)) {
+    errors.courses = "Courses must be a list.";
+    return [];
+  }
+
+  const seenSlugs = new Set();
+  return courses.map((entry, index) => {
+    const courseSlug = typeof entry?.courseSlug === "string" ? entry.courseSlug.trim().toLowerCase() : "";
+    const tutorId = typeof entry?.tutorId === "string" ? entry.tutorId.trim() : "";
+
+    if (!courseSlug) errors[`courses.${index}.courseSlug`] = "Course is required.";
+    else if (seenSlugs.has(courseSlug)) errors[`courses.${index}.courseSlug`] = "This course was already selected above.";
+    seenSlugs.add(courseSlug);
+
+    if (!tutorId) errors[`courses.${index}.tutorId`] = "A tutor is required for every selected course.";
+
+    return { courseSlug, tutorId };
+  });
+}
+
 // Admin-created student — the enrollment entry point (ROADMAP.md: the
 // website is marketing-only and never creates accounts itself; a visitor
 // enrolling on the website only triggers notification emails, not an
@@ -396,7 +465,7 @@ function validateAccountType(accountType, errors) {
 // defaulting silently.
 export async function createStudent(req, res) {
   try {
-    const { name, phone, email, accountType } = req.body;
+    const { name, phone, email, accountType, courses } = req.body;
     const errors = {};
 
     if (typeof name !== "string" || !name.trim()) {
@@ -417,13 +486,25 @@ export async function createStudent(req, res) {
     }
 
     const validatedAccountType = validateAccountType(accountType, errors);
+    const cleanedCourses = validateCourseSelections(courses, errors);
+
+    await connectDB();
+
+    // Every tutorId has to resolve to a real, currently-role:"teacher"
+    // account — checked before any writes happen (same as the sync checks
+    // above) so a bad tutor id never leaves a student created with some
+    // courses enrolled and one silently skipped.
+    const tutorIds = [...new Set(cleanedCourses.map((c) => c.tutorId).filter(Boolean))];
+    const tutors = tutorIds.length > 0 ? await User.find({ _id: { $in: tutorIds }, role: "teacher" }).select("_id name").lean() : [];
+    const tutorById = new Map(tutors.map((t) => [t._id.toString(), t]));
+    cleanedCourses.forEach((c, index) => {
+      if (c.tutorId && !tutorById.has(c.tutorId)) errors[`courses.${index}.tutorId`] = "Selected teacher not found.";
+    });
 
     if (Object.keys(errors).length > 0) {
       res.status(400).json({ success: false, errors });
       return;
     }
-
-    await connectDB();
 
     const isTrial = validatedAccountType === "trial";
 
@@ -442,6 +523,30 @@ export async function createStudent(req, res) {
       throw err;
     }
 
+    // The student account already exists at this point — cleanedCourses was
+    // fully validated above (every slug unique, every tutor real), so this
+    // loop should always succeed; the E11000 catch is defense in depth for
+    // the one collision that validation can't rule out (a genuine race),
+    // turned into the same clear 409 createEnrollment already uses rather
+    // than a raw Mongo error, per Part 3.
+    const enrollments = [];
+    for (const { courseSlug, tutorId } of cleanedCourses) {
+      const tutor = tutorById.get(tutorId);
+      try {
+        const enrollment = await Enrollment.create({ student: student._id, courseSlug, tutor: tutor._id, status: "active" });
+        enrollments.push({ _id: enrollment._id, courseSlug: enrollment.courseSlug, tutorId: tutor._id, tutorName: tutor.name });
+      } catch (err) {
+        if (err.code === 11000) {
+          res.status(409).json({
+            success: false,
+            message: `${student.name} is already enrolled in "${courseSlug}".`,
+          });
+          return;
+        }
+        throw err;
+      }
+    }
+
     res.status(201).json({
       success: true,
       student: {
@@ -452,6 +557,7 @@ export async function createStudent(req, res) {
         accountType: student.isTrial ? "trial" : "permanent",
         accessExpiresAt: student.accessExpiresAt,
       },
+      enrollments,
     });
   } catch (err) {
     console.error("POST /api/admin/students failed:", err);
@@ -778,6 +884,31 @@ export async function reassignEnrollmentTutor(req, res) {
     });
   } catch (err) {
     console.error("PATCH /api/admin/enrollments/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Removing a course entirely (Phase 21 Part 4) — a hard delete, unlike the
+// soft-delete used for User docs. There's no history on Enrollment itself
+// worth preserving: Class and Assignment records reference the student/
+// tutor Users directly, not the Enrollment id, so a student's past classes
+// and assignments stay intact and visible either way (same guarantee
+// reassignEnrollmentTutor's comment above already relies on).
+export async function deleteEnrollment(req, res) {
+  try {
+    await connectDB();
+
+    const enrollment = await Enrollment.findById(req.params.id);
+    if (!enrollment) {
+      res.status(404).json({ success: false, message: "Enrollment not found." });
+      return;
+    }
+
+    await enrollment.deleteOne();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("DELETE /api/admin/enrollments/:id failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }

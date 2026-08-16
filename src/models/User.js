@@ -73,6 +73,15 @@ const UserSchema = new mongoose.Schema(
     // for other push use later. null until the app has actually asked for
     // notification permission and gotten one back.
     pushToken: { type: String, default: null },
+
+    // Which languages this teacher teaches (Phase 21) — filters the tutor
+    // dropdown in the admin dashboard's Add Student flow so a course's tutor
+    // list only shows teachers actually qualified for that language. Only
+    // ever set for role: "teacher"; empty by default rather than required,
+    // since no teacher has been tagged yet — the dashboard falls back to
+    // showing every active teacher for a course until at least one is
+    // tagged for that language (see adminController.buildTeacherRows).
+    languages: { type: [String], enum: ["kannada", "hindi", "telugu"], default: [] },
   },
   { timestamps: true }
 );
