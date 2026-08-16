@@ -34,8 +34,21 @@ export function renderEmailLayout({ preheader = "", bodyHtml }) {
         <td align="center" style="padding:32px 16px;">
           <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#ffffff; border-radius:12px; overflow:hidden; border:1px solid #e2e8f0;">
             <tr>
-              <td style="background-color:#0f172a; padding:24px 32px;">
-                <span style="font-family: Arial, Helvetica, sans-serif; font-size:20px; font-weight:bold; color:#ffffff;">Bhaasha Seekho</span>
+              <td style="background-color:#0f172a; padding:20px 32px;">
+                <!-- Logo image + text side by side, not image-only: if the
+                     client blocks remote images (common on first open), the
+                     alt text and the adjacent <span> both still render the
+                     brand name immediately, same reasoning as emailButton
+                     below just applied to the header instead of dropping
+                     the image entirely. -->
+                <img
+                  src="https://res.cloudinary.com/p4uypdeo/image/upload/v1786541401/logo.png"
+                  alt="${siteMeta.name}"
+                  width="40"
+                  height="40"
+                  style="display:inline-block; vertical-align:middle; border:0; border-radius:8px;"
+                />
+                <span style="display:inline-block; vertical-align:middle; margin-left:12px; font-family: Arial, Helvetica, sans-serif; font-size:20px; font-weight:bold; color:#ffffff;">Bhaasha Seekho</span>
               </td>
             </tr>
             <tr>

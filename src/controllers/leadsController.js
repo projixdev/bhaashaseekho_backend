@@ -50,17 +50,23 @@ function buildOwnerEmailHtml(body) {
   return renderEmailLayout({ preheader: `New lead: ${body.name} (${body.interest})`, bodyHtml: inner });
 }
 
+// Login is phone + emailed OTP, no static password (ROADMAP.md's auth
+// decisions) — "login credentials" here means "your phone number is
+// enrolled and ready," not a password being generated. Worded to stay
+// accurate to that while still matching what the founder asked visitors to
+// hear: a concrete 24-hour promise, not a vague "we'll reach out."
 function buildUserConfirmationHtml(body) {
   const whatsappUrl = getWhatsAppUrl();
 
   const inner = `
     <p style="margin:0 0 16px;">Hi ${escapeHtml(body.name)},</p>
-    <p style="margin:0 0 20px;">Thanks for your interest in learning ${escapeHtml(body.interest)} with Bhaasha Seekho! We've received your details and our team will reach out to you within 24 hours to help you get started.</p>
+    <p style="margin:0 0 20px;">Thanks for your interest in learning ${escapeHtml(body.interest)} with Bhaasha Seekho! We've received your details — your demo login will be set up and shared with you within 24 hours.</p>
+    <p style="margin:0 0 20px;">Once it's ready, just open the Bhaasha Seekho app and log in with this phone number: <strong>${escapeHtml(body.phone)}</strong>. We'll email you a one-time code each time you log in, so there's no password to remember.</p>
     ${whatsappUrl ? `<p style="margin:0 0 8px;">${emailButton("Chat on WhatsApp", whatsappUrl)}</p>` : ""}
     <p style="margin:24px 0 0;">— The Bhaasha Seekho Team</p>
   `;
   return renderEmailLayout({
-    preheader: "We've received your details and will be in touch within 24 hours.",
+    preheader: "Your demo login will be ready within 24 hours.",
     bodyHtml: inner,
   });
 }
@@ -154,7 +160,7 @@ export async function postLead(req, res) {
       try {
         await sendTransactionalEmail({
           to: body.email,
-          subject: "We've got your details — Bhaasha Seekho",
+          subject: "Your demo login is on its way — Bhaasha Seekho",
           htmlContent: buildUserConfirmationHtml(body),
         });
       } catch (confirmErr) {
