@@ -7,6 +7,7 @@ import assignmentRoutes from "./assignmentRoutes.js";
 import rosterRoutes from "./rosterRoutes.js";
 import feedbackRoutes from "./feedbackRoutes.js";
 import adminRoutes from "./adminRoutes.js";
+import notificationRoutes from "./notificationRoutes.js";
 
 const router = Router();
 
@@ -18,5 +19,6 @@ router.use("/assignments", assignmentRoutes);
 router.use("/roster", rosterRoutes);
 router.use("/feedback", feedbackRoutes);
 router.use("/admin", adminRoutes);
+router.use("/notifications", notificationRoutes);
 
 export default router;

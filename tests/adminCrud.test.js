@@ -221,25 +221,54 @@ describe("POST /api/admin/students", () => {
     return request(app).post("/api/admin/students").set("Authorization", `Bearer ${token}`).send(body);
   }
 
-  test("valid creation → 201", async () => {
+  const validBody = (overrides = {}) => ({
+    name: "New Student",
+    phone: "9800000401",
+    email: "newstudent@example.com",
+    accountType: "permanent",
+    ...overrides,
+  });
+
+  test("valid creation, accountType permanent → 201, isTrial false, no expiry", async () => {
     const token = await adminToken();
-    const res = await createStudentReq({ name: "New Student", phone: "9800000401", email: "newstudent@example.com" }, token);
+    const res = await createStudentReq(validBody(), token);
 
     expect(res.status).toBe(201);
-    expect(res.body.student).toMatchObject({ name: "New Student", phone: "9800000401", email: "newstudent@example.com" });
+    expect(res.body.student).toMatchObject({
+      name: "New Student",
+      phone: "9800000401",
+      email: "newstudent@example.com",
+      accountType: "permanent",
+      accessExpiresAt: null,
+    });
 
     const stored = await User.findOne({ phone: "9800000401" }).select("+password");
     expect(stored.role).toBe("student");
     expect(stored.isAdmin).toBe(false);
     expect(stored.password).toBeUndefined();
+    expect(stored.isTrial).toBe(false);
+    expect(stored.accessExpiresAt).toBeNull();
+  });
+
+  test("accountType trial → 201, isTrial true, accessExpiresAt ~7 days out", async () => {
+    const token = await adminToken();
+    const before = Date.now();
+    const res = await createStudentReq(validBody({ phone: "9800000420", accountType: "trial" }), token);
+    const after = Date.now();
+
+    expect(res.status).toBe(201);
+    expect(res.body.student.accountType).toBe("trial");
+
+    const stored = await User.findOne({ phone: "9800000420" });
+    expect(stored.isTrial).toBe(true);
+    const expiresAt = stored.accessExpiresAt.getTime();
+    expect(expiresAt).toBeGreaterThanOrEqual(before + 7 * 24 * 60 * 60 * 1000);
+    expect(expiresAt).toBeLessThanOrEqual(after + 7 * 24 * 60 * 60 * 1000);
   });
 
   test("a freshly admin-created student can immediately log in via the existing OTP flow", async () => {
     const token = await adminToken();
-    const created = await createStudentReq(
-      { name: "Login Test", phone: "9800000402", email: "logintest@example.com" },
-      token
-    );
+    const created = await createStudentReq(validBody({ phone: "9800000402", email: "logintest@example.com" }), token);
     expect(created.status).toBe(201);
 
     const sent = await request(app)
@@ -259,37 +288,51 @@ describe("POST /api/admin/students", () => {
 
   test("missing email → 400 (a student needs one to ever receive an OTP)", async () => {
     const token = await adminToken();
-    const res = await createStudentReq({ name: "No Email", phone: "9800000403" }, token);
+    const res = await createStudentReq(validBody({ phone: "9800000403", email: undefined }), token);
     expect(res.status).toBe(400);
     expect(res.body.errors.email).toBeTruthy();
   });
 
   test("invalid email format → 400", async () => {
     const token = await adminToken();
-    const res = await createStudentReq({ name: "Bad Email", phone: "9800000404", email: "not-an-email" }, token);
+    const res = await createStudentReq(validBody({ phone: "9800000404", email: "not-an-email" }), token);
     expect(res.status).toBe(400);
     expect(res.body.errors.email).toBeTruthy();
   });
 
   test("missing name → 400", async () => {
     const token = await adminToken();
-    const res = await createStudentReq({ phone: "9800000405", email: "x@example.com" }, token);
+    const res = await createStudentReq(validBody({ phone: "9800000405", name: undefined }), token);
     expect(res.status).toBe(400);
     expect(res.body.errors.name).toBeTruthy();
   });
 
   test("missing/invalid phone → 400", async () => {
     const token = await adminToken();
-    const res = await createStudentReq({ name: "Bad Phone", email: "x2@example.com" }, token);
+    const res = await createStudentReq(validBody({ phone: undefined }), token);
     expect(res.status).toBe(400);
     expect(res.body.errors.phone).toBeTruthy();
+  });
+
+  test("missing accountType → 400", async () => {
+    const token = await adminToken();
+    const res = await createStudentReq(validBody({ phone: "9800000421", accountType: undefined }), token);
+    expect(res.status).toBe(400);
+    expect(res.body.errors.accountType).toBeTruthy();
+  });
+
+  test('invalid accountType (not "trial"/"permanent") → 400', async () => {
+    const token = await adminToken();
+    const res = await createStudentReq(validBody({ phone: "9800000422", accountType: "lifetime" }), token);
+    expect(res.status).toBe(400);
+    expect(res.body.errors.accountType).toBeTruthy();
   });
 
   test("duplicate phone → 409, no second user created", async () => {
     const token = await adminToken();
     const existing = await createStudent({ phone: "9800000406" });
 
-    const res = await createStudentReq({ name: "Someone Else", phone: "9800000406", email: "someone@example.com" }, token);
+    const res = await createStudentReq(validBody({ phone: "9800000406", email: "someone@example.com" }), token);
     expect(res.status).toBe(409);
     expect(await User.countDocuments({ phone: "9800000406" })).toBe(1);
     expect((await User.findById(existing._id)).name).toBe(existing.name);
@@ -299,19 +342,19 @@ describe("POST /api/admin/students", () => {
     const token = await adminToken();
     await createStudent({ phone: "9800000407", email: "shared2@example.com" });
 
-    const res = await createStudentReq({ name: "Someone Else", phone: "9800000408", email: "shared2@example.com" }, token);
+    const res = await createStudentReq(validBody({ phone: "9800000408", email: "shared2@example.com" }), token);
     expect(res.status).toBe(409);
   });
 
   test("non-admin token → 403", async () => {
     const teacher = await createTeacher();
-    const res = await createStudentReq({ name: "X", phone: "9800000409", email: "x3@example.com" }, signToken(teacher));
+    const res = await createStudentReq(validBody({ phone: "9800000409", email: "x3@example.com" }), signToken(teacher));
     expect(res.status).toBe(403);
     expect(await User.findOne({ phone: "9800000409" })).toBeNull();
   });
 
   test("no token → 401", async () => {
-    const res = await request(app).post("/api/admin/students").send({ name: "X", phone: "9800000410", email: "x4@example.com" });
+    const res = await request(app).post("/api/admin/students").send(validBody({ phone: "9800000410", email: "x4@example.com" }));
     expect(res.status).toBe(401);
   });
 });
@@ -371,6 +414,46 @@ describe("PATCH /api/admin/students/:id", () => {
 
     const res = await patchStudent(student._id, { email: "taken2@example.com" }, token);
     expect(res.status).toBe(409);
+  });
+
+  test("accountType: permanent converts an existing trial student — clears accessExpiresAt", async () => {
+    const token = await adminToken();
+    const student = await createStudent({ isTrial: true, accessExpiresAt: new Date(Date.now() + 1000) });
+
+    const res = await patchStudent(student._id, { accountType: "permanent" }, token);
+    expect(res.status).toBe(200);
+    expect(res.body.student).toMatchObject({ accountType: "permanent", accessExpiresAt: null });
+
+    const stored = await User.findById(student._id);
+    expect(stored.isTrial).toBe(false);
+    expect(stored.accessExpiresAt).toBeNull();
+  });
+
+  test("accountType: trial converts an existing permanent student — sets a fresh 7-day window from now", async () => {
+    const token = await adminToken();
+    const student = await createStudent({ isTrial: false });
+    const before = Date.now();
+
+    const res = await patchStudent(student._id, { accountType: "trial" }, token);
+    const after = Date.now();
+    expect(res.status).toBe(200);
+    expect(res.body.student.accountType).toBe("trial");
+
+    const stored = await User.findById(student._id);
+    expect(stored.isTrial).toBe(true);
+    const expiresAt = stored.accessExpiresAt.getTime();
+    expect(expiresAt).toBeGreaterThanOrEqual(before + 7 * 24 * 60 * 60 * 1000);
+    expect(expiresAt).toBeLessThanOrEqual(after + 7 * 24 * 60 * 60 * 1000);
+  });
+
+  test('invalid accountType → 400, nothing changed', async () => {
+    const token = await adminToken();
+    const student = await createStudent({ isTrial: false });
+
+    const res = await patchStudent(student._id, { accountType: "forever" }, token);
+    expect(res.status).toBe(400);
+    expect(res.body.errors.accountType).toBeTruthy();
+    expect((await User.findById(student._id)).isTrial).toBe(false);
   });
 
   test("unknown id → 404", async () => {

@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { connectDB } from "../config/db.js";
 import User from "../models/User.js";
@@ -6,8 +7,12 @@ import { sendTransactionalEmail } from "../services/brevoService.js";
 import { renderEmailLayout } from "../services/emailTemplates.js";
 import { generateOtp, hashOtp, verifyOtpHash, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../utils/otp.js";
 import { validatePhoneInput, validateOtpInput, normalizePhone } from "../utils/validation.js";
+import { currentMonthKey } from "../utils/sessionMonth.js";
 
-function signSession(user) {
+// sessionId is required (not optional/defaulted here) — the caller must
+// always pass the value it just wrote to user.activeSessionId, so the two
+// can never silently drift apart.
+function signSession(user, sessionId) {
   return jwt.sign(
     {
       sub: user._id.toString(),
@@ -20,6 +25,13 @@ function signSession(user) {
       // trial's natural expiry is caught even on an already-issued,
       // otherwise-still-valid token.
       accessExpiresAt: user.accessExpiresAt ? user.accessExpiresAt.toISOString() : null,
+      // Single-device enforcement (requireAuth compares this against
+      // User.activeSessionId) and forced monthly re-login (requireAuth
+      // compares this against the current calendar month) — both are
+      // "teachers and students" features, deliberately absent from the
+      // separate admin password-login token (adminController.adminLogin).
+      sessionId,
+      loginMonth: currentMonthKey(),
     },
     env.jwtSecret,
     { expiresIn: "30d" }
@@ -142,10 +154,11 @@ export async function verifyOtp(req, res) {
 
     const phone = normalizePhone(req.body.phone);
     const otp = req.body.otp.trim();
+    const forceLogout = req.body.forceLogout === true;
 
     await connectDB();
 
-    const user = await User.findOne({ phone });
+    const user = await User.findOne({ phone }).select("+activeSessionId");
     if (!user || !user.otpHash || !user.otpExpiresAt) {
       res.status(400).json({ success: false, message: "Request a new code first." });
       return;
@@ -168,15 +181,33 @@ export async function verifyOtp(req, res) {
       return;
     }
 
-    // OTP consumed — clear it so it can't be replayed.
+    // Correct code, but this account is already logged in elsewhere and the
+    // client hasn't confirmed the takeover yet — don't consume the OTP
+    // (leave it valid) so the confirmation round-trip doesn't force the
+    // visitor to request and re-enter a brand new code just to say yes.
+    if (user.activeSessionId && !forceLogout) {
+      res.status(409).json({
+        success: false,
+        requiresForceLogout: true,
+        message: "This account is already logged in on another device. Log out that device and continue here?",
+      });
+      return;
+    }
+
+    // OTP consumed — clear it so it can't be replayed. A fresh sessionId is
+    // written (and embedded in the token below) unconditionally, which is
+    // exactly what invalidates a previous device's session on the very next
+    // request it makes through requireAuth, whether or not one existed.
+    const sessionId = crypto.randomUUID();
     user.otpHash = null;
     user.otpExpiresAt = null;
     user.otpAttempts = 0;
+    user.activeSessionId = sessionId;
     await user.save();
 
     res.json({
       success: true,
-      token: signSession(user),
+      token: signSession(user, sessionId),
       user: {
         id: user._id,
         phone: user.phone,

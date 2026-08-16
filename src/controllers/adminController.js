@@ -315,17 +315,34 @@ export async function deleteTeacher(req, res) {
   }
 }
 
+// A trial account gets exactly this long from the moment the admin creates
+// it (not from any class date — there's no trial-class-scheduling step in
+// this flow) before sendOtp/requireAuth start rejecting it.
+export const TRIAL_ACCOUNT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function validateAccountType(accountType, errors) {
+  if (accountType !== "trial" && accountType !== "permanent") {
+    errors.accountType = 'Account type must be "trial" or "permanent".';
+    return null;
+  }
+  return accountType;
+}
+
 // Admin-created student — the enrollment entry point (ROADMAP.md: the
-// website is marketing-only and never creates accounts itself, so this is
-// how a student who's enrolled becomes a real, login-capable account).
-// Unlike createTeacher, email is required here rather than optional: a
-// student's phone is the login identifier but the OTP itself is only ever
-// delivered by email (authController.sendOtp), so a student created without
-// one can never actually log in until an admin comes back to add it.
-// Requiring it up front avoids silently creating a dead-end account.
+// website is marketing-only and never creates accounts itself; a visitor
+// enrolling on the website only triggers notification emails, not an
+// account — this is how they actually become a real, login-capable
+// account). Unlike createTeacher, email is required here rather than
+// optional: a student's phone is the login identifier but the OTP itself is
+// only ever delivered by email (authController.sendOtp), so a student
+// created without one can never actually log in until an admin comes back
+// to add it. Requiring it up front avoids silently creating a dead-end
+// account. accountType is required too — the admin explicitly picks Trial
+// (7-day expiring access) or Permanent (no expiry) rather than either
+// defaulting silently.
 export async function createStudent(req, res) {
   try {
-    const { name, phone, email } = req.body;
+    const { name, phone, email, accountType } = req.body;
     const errors = {};
 
     if (typeof name !== "string" || !name.trim()) {
@@ -345,12 +362,16 @@ export async function createStudent(req, res) {
       errors.email = "Email is too long.";
     }
 
+    const validatedAccountType = validateAccountType(accountType, errors);
+
     if (Object.keys(errors).length > 0) {
       res.status(400).json({ success: false, errors });
       return;
     }
 
     await connectDB();
+
+    const isTrial = validatedAccountType === "trial";
 
     let student;
     try {
@@ -359,6 +380,8 @@ export async function createStudent(req, res) {
         name: name.trim(),
         role: "student",
         email: email.trim().toLowerCase(),
+        isTrial,
+        accessExpiresAt: isTrial ? new Date(Date.now() + TRIAL_ACCOUNT_WINDOW_MS) : null,
       });
     } catch (err) {
       if (respondDuplicateKeyError(err, res)) return;
@@ -367,7 +390,14 @@ export async function createStudent(req, res) {
 
     res.status(201).json({
       success: true,
-      student: { _id: student._id, name: student.name, phone: student.phone, email: student.email },
+      student: {
+        _id: student._id,
+        name: student.name,
+        phone: student.phone,
+        email: student.email,
+        accountType: student.isTrial ? "trial" : "permanent",
+        accessExpiresAt: student.accessExpiresAt,
+      },
     });
   } catch (err) {
     console.error("POST /api/admin/students failed:", err);
@@ -435,6 +465,7 @@ async function buildStudentRows(students) {
         .filter((e) => e.student.toString() === idStr)
         .map((e) => ({ courseSlug: e.courseSlug, name: e.tutor?.name ?? null })),
       isTrial: Boolean(s.isTrial),
+      accountType: s.isTrial ? "trial" : "permanent",
       accessExpiresAt: s.isTrial ? s.accessExpiresAt : null,
       isActive: s.isActive !== false,
     };
@@ -482,7 +513,12 @@ export async function getAdminStudent(req, res) {
 // Partial update — only the fields actually present in the body are
 // touched. Unlike updateTeacher, email can never be cleared here (empty
 // string is a validation error, not an unset) — a student's only login
-// path depends on always having one on file.
+// path depends on always having one on file. accountType, when present,
+// converts between Trial and Permanent — e.g. the student decides to
+// continue after their 7-day trial, so the admin flips them to Permanent
+// here and accessExpiresAt is cleared. Flipping *to* Trial always starts a
+// fresh 7-day window from the moment of this request, not from the
+// account's original creation.
 export async function updateStudent(req, res) {
   try {
     await connectDB();
@@ -493,7 +529,7 @@ export async function updateStudent(req, res) {
       return;
     }
 
-    const { name, phone, email } = req.body;
+    const { name, phone, email, accountType } = req.body;
     const errors = {};
 
     if (name !== undefined) {
@@ -513,6 +549,7 @@ export async function updateStudent(req, res) {
         errors.email = "Email is too long.";
       }
     }
+    const validatedAccountType = accountType !== undefined ? validateAccountType(accountType, errors) : undefined;
 
     if (Object.keys(errors).length > 0) {
       res.status(400).json({ success: false, errors });
@@ -523,6 +560,11 @@ export async function updateStudent(req, res) {
     if (name !== undefined) $set.name = name.trim();
     if (phone !== undefined) $set.phone = normalizePhone(phone);
     if (email !== undefined) $set.email = email.trim().toLowerCase();
+    if (validatedAccountType !== undefined) {
+      const isTrial = validatedAccountType === "trial";
+      $set.isTrial = isTrial;
+      $set.accessExpiresAt = isTrial ? new Date(Date.now() + TRIAL_ACCOUNT_WINDOW_MS) : null;
+    }
 
     let updated;
     try {
@@ -534,7 +576,15 @@ export async function updateStudent(req, res) {
 
     res.json({
       success: true,
-      student: { _id: updated._id, name: updated.name, phone: updated.phone, email: updated.email || null, isActive: updated.isActive !== false },
+      student: {
+        _id: updated._id,
+        name: updated.name,
+        phone: updated.phone,
+        email: updated.email || null,
+        accountType: updated.isTrial ? "trial" : "permanent",
+        accessExpiresAt: updated.accessExpiresAt,
+        isActive: updated.isActive !== false,
+      },
     });
   } catch (err) {
     console.error("PATCH /api/admin/students/:id failed:", err);

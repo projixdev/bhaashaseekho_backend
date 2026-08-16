@@ -56,6 +56,23 @@ const UserSchema = new mongoose.Schema(
     otpExpiresAt: { type: Date, default: null },
     otpAttempts: { type: Number, default: 0 },
     lastOtpSentAt: { type: Date, default: null },
+
+    // Single-device login enforcement — a fresh random id written by
+    // authController.verifyOtp on every successful login (never on OTP
+    // send), and embedded in that login's JWT. requireAuth rejects any
+    // token whose embedded id doesn't match the current value here, which
+    // is exactly what makes a new login on device B invalidate device A's
+    // still-otherwise-valid 30-day token without needing a server-side
+    // revocation list. select: false since it's an internal auth mechanism,
+    // not something any route should ever need to return.
+    activeSessionId: { type: String, default: null, select: false },
+
+    // Expo push token, registered by the app after login (POST
+    // /api/notifications/register-token) — used by the monthly forced-
+    // relogin reminder (src/jobs/monthlyReloginReminder.js) and available
+    // for other push use later. null until the app has actually asked for
+    // notification permission and gotten one back.
+    pushToken: { type: String, default: null },
   },
   { timestamps: true }
 );
