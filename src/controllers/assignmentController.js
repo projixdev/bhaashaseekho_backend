@@ -3,6 +3,7 @@ import { uploadBuffer } from "../config/cloudinary.js";
 import Assignment from "../models/Assignment.js";
 import Enrollment from "../models/Enrollment.js";
 import User from "../models/User.js";
+import { notifyAssignmentAssigned, notifyAssignmentSubmitted, notifyAssignmentReviewed } from "../services/assignmentNotifications.js";
 
 // Assessments (not homework) unlock once a student has had this many
 // classes. Driven by User.completedClassCount, written by
@@ -81,6 +82,8 @@ export async function submitAssignment(req, res) {
     assignment.status = "submitted";
     await assignment.save();
 
+    await notifyAssignmentSubmitted(assignment);
+
     res.json({ success: true, assignment });
   } catch (err) {
     console.error("POST /api/assignments/:id/submit failed:", err);
@@ -134,6 +137,8 @@ export async function createAssignment(req, res) {
       dueDate: parsedDueDate,
     });
 
+    await notifyAssignmentAssigned(assignment);
+
     res.json({ success: true, assignment });
   } catch (err) {
     console.error("POST /api/assignments failed:", err);
@@ -163,6 +168,8 @@ export async function reviewAssignment(req, res) {
     assignment.score = score;
     assignment.status = "reviewed";
     await assignment.save();
+
+    await notifyAssignmentReviewed(assignment);
 
     res.json({ success: true, assignment });
   } catch (err) {

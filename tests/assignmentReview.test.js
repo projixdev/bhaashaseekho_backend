@@ -1,9 +1,18 @@
 // Reviewed must mean graded, not just "looked at" — see the validation
 // comment in assignmentController.js's reviewAssignment.
+import { jest } from "@jest/globals";
 import request from "supertest";
 import { connectTestDB, clearTestDB, disconnectTestDB } from "./helpers/db.js";
 import { createStudent, createTeacher, createAssignmentDoc, signToken } from "./helpers/fixtures.js";
 import Assignment from "../src/models/Assignment.js";
+
+// reviewAssignment now fires notifyAssignmentReviewed (Phase 18), which
+// emails the student — mocked here so these tests never make a real network
+// call, same as every other file that exercises an endpoint behind a
+// notification trigger.
+jest.unstable_mockModule("../src/services/brevoService.js", () => ({
+  sendTransactionalEmail: jest.fn().mockResolvedValue({}),
+}));
 
 const { default: app } = await import("../src/app.js");
 

@@ -11,7 +11,13 @@ const ClassSchema = new mongoose.Schema(
     // Zoom/Google Meet link — classes run on those platforms already, no
     // in-app video needed (see ROADMAP.md Phase 4).
     meetingLink: { type: String, trim: true, default: "" },
-    status: { type: String, enum: ["upcoming", "live", "completed", "cancelled"], default: "upcoming" },
+    status: { type: String, enum: ["upcoming", "live", "completed", "cancelled", "postponed"], default: "upcoming" },
+    // Reminder windows already fired for this class (e.g. ["60min", "30min"])
+    // — checked by jobs/classReminders.js before sending, so a cron tick that
+    // re-scans an already-notified class (overlap, restart, a missed tick
+    // that catches up later) can never double-send. Per-record, unlike the
+    // monthly relogin reminder which has nothing to dedupe against.
+    notificationsSent: { type: [String], default: [] },
     // Written once, by classController.endClass, when the tutor ends the
     // class. Per-student status (not a plain attended/not-attended boolean)
     // so a future duration-based auto-classification (Zoom integration) has

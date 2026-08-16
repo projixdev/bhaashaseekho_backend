@@ -2,6 +2,7 @@ import { connectDB } from "../config/db.js";
 import Class from "../models/Class.js";
 import Enrollment from "../models/Enrollment.js";
 import User from "../models/User.js";
+import { notifyClassStatusChange } from "../services/classNotifications.js";
 
 // Students see classes they're enrolled in; teachers see classes they teach.
 // Same endpoint, filter depends on req.user.role from the verified JWT.
@@ -153,6 +154,65 @@ export async function endClass(req, res) {
     res.json({ success: true, class: updatedClass });
   } catch (err) {
     console.error("PATCH /api/classes/:id/end failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+const VALID_STATUS_UPDATES = ["cancelled", "postponed"];
+
+// Cancel/postpone — only ever from "upcoming" (a live class is already
+// happening; completed/cancelled/postponed are terminal for this endpoint).
+// Fires the recipient notification synchronously as part of this request,
+// not on the next cron tick — see PART 4 of the phase brief: a
+// cancellation/postponement needs to reach people before the class's
+// original time, not whenever the reminder job next runs.
+export async function updateClassStatus(req, res) {
+  try {
+    await connectDB();
+
+    const classDoc = await Class.findById(req.params.id);
+    if (!classDoc) {
+      res.status(404).json({ success: false, message: "Class not found." });
+      return;
+    }
+    if (classDoc.tutor.toString() !== req.user.id) {
+      res.status(403).json({ success: false, message: "You don't teach this class." });
+      return;
+    }
+
+    const { status, scheduledAt } = req.body;
+    if (!VALID_STATUS_UPDATES.includes(status)) {
+      res.status(400).json({ success: false, message: 'status must be "cancelled" or "postponed".' });
+      return;
+    }
+    if (classDoc.status !== "upcoming") {
+      res.status(409).json({ success: false, message: `This class is already ${classDoc.status} and can't be updated.` });
+      return;
+    }
+
+    // scheduledAt is optional here — postponing without a new time yet is a
+    // valid, common case (see notifyClassStatusChange's "to be confirmed"
+    // copy). When given, it becomes the class's new scheduledAt right away
+    // rather than a separate pending field, so there's still exactly one
+    // scheduledAt to reason about everywhere else that reads it.
+    let parsedScheduledAt;
+    if (scheduledAt !== undefined && scheduledAt !== null && scheduledAt !== "") {
+      parsedScheduledAt = new Date(scheduledAt);
+      if (Number.isNaN(parsedScheduledAt.getTime())) {
+        res.status(400).json({ success: false, message: "Invalid scheduledAt date." });
+        return;
+      }
+    }
+
+    classDoc.status = status;
+    if (parsedScheduledAt) classDoc.scheduledAt = parsedScheduledAt;
+    await classDoc.save();
+
+    await notifyClassStatusChange(classDoc, { newScheduledAt: parsedScheduledAt });
+
+    res.json({ success: true, class: classDoc });
+  } catch (err) {
+    console.error("PATCH /api/classes/:id/status failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }
