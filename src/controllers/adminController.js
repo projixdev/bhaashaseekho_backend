@@ -517,7 +517,7 @@ async function buildStudentRows(students) {
       assignmentStatus: overallAssignmentStatus(own),
       teachers: enrollments
         .filter((e) => e.student.toString() === idStr)
-        .map((e) => ({ courseSlug: e.courseSlug, name: e.tutor?.name ?? null })),
+        .map((e) => ({ enrollmentId: e._id, courseSlug: e.courseSlug, tutorId: e.tutor?._id ?? null, name: e.tutor?.name ?? null })),
       isTrial: Boolean(s.isTrial),
       accountType: s.isTrial ? "trial" : "permanent",
       accessExpiresAt: s.isTrial ? s.accessExpiresAt : null,
@@ -676,6 +676,108 @@ export async function deleteStudent(req, res) {
     res.json({ success: true, student: { _id: student._id, name: student.name, isActive: false } });
   } catch (err) {
     console.error("DELETE /api/admin/students/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Dashboard equivalents of scripts/createUser.js's --course/--tutor flags
+// and scripts/assignTutor.js — the "founder teaches the first few classes,
+// then hands off to a permanent tutor" workflow those scripts already
+// supported CLI-only. Loosely coupled to a fixed course-slug list on
+// purpose, same as the scripts and the website: course content lives in
+// the website repo, not this database, so this doesn't validate courseSlug
+// against a hardcoded enum — the admin dashboard's own dropdown is what
+// keeps the value sane, same trust boundary as the CLI already has.
+function courseSlugErrors(courseSlug, errors) {
+  if (typeof courseSlug !== "string" || !courseSlug.trim()) {
+    errors.courseSlug = "Course is required.";
+  } else if (courseSlug.trim().length > 60) {
+    errors.courseSlug = "Course is too long.";
+  }
+}
+
+async function findTeacherOrError(tutorId, errors) {
+  if (typeof tutorId !== "string" || !tutorId.trim()) {
+    errors.tutorId = "Teacher is required.";
+    return null;
+  }
+  const tutor = await User.findOne({ _id: tutorId, role: "teacher" }).select("_id name").lean();
+  if (!tutor) errors.tutorId = "Selected teacher not found.";
+  return tutor;
+}
+
+// Enrolls a student in a course with a chosen tutor — upserts on
+// (student, courseSlug) rather than rejecting a duplicate outright,
+// matching createUser.js's own re-run-safe behavior: re-"enrolling" in a
+// course a student is already in just updates who teaches it, same as
+// reassignEnrollmentTutor below would, rather than erroring.
+export async function createEnrollment(req, res) {
+  try {
+    await connectDB();
+
+    const student = await User.findOne({ _id: req.params.id, role: "student" });
+    if (!student) {
+      res.status(404).json({ success: false, message: "Student not found." });
+      return;
+    }
+
+    const { courseSlug, tutorId } = req.body;
+    const errors = {};
+    courseSlugErrors(courseSlug, errors);
+    const tutor = await findTeacherOrError(tutorId, errors);
+
+    if (Object.keys(errors).length > 0) {
+      res.status(400).json({ success: false, errors });
+      return;
+    }
+
+    const enrollment = await Enrollment.findOneAndUpdate(
+      { student: student._id, courseSlug: courseSlug.trim().toLowerCase() },
+      { student: student._id, courseSlug: courseSlug.trim().toLowerCase(), tutor: tutor._id, status: "active" },
+      { upsert: true, returnDocument: "after" }
+    );
+
+    res.status(201).json({
+      success: true,
+      enrollment: { _id: enrollment._id, courseSlug: enrollment.courseSlug, tutorId: tutor._id, tutorName: tutor.name },
+    });
+  } catch (err) {
+    console.error("POST /api/admin/students/:id/enrollments failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// The handoff step — points an existing enrollment at a different tutor.
+// Doesn't touch Class/Assignment history at all: GET /api/classes already
+// shows a student every class they've had regardless of which tutor taught
+// it, so past classes and the newly-assigned tutor's future ones just show
+// up together, in order (same guarantee scripts/assignTutor.js documents).
+export async function reassignEnrollmentTutor(req, res) {
+  try {
+    await connectDB();
+
+    const enrollment = await Enrollment.findById(req.params.id);
+    if (!enrollment) {
+      res.status(404).json({ success: false, message: "Enrollment not found." });
+      return;
+    }
+
+    const errors = {};
+    const tutor = await findTeacherOrError(req.body.tutorId, errors);
+    if (Object.keys(errors).length > 0) {
+      res.status(400).json({ success: false, errors });
+      return;
+    }
+
+    enrollment.tutor = tutor._id;
+    await enrollment.save();
+
+    res.json({
+      success: true,
+      enrollment: { _id: enrollment._id, courseSlug: enrollment.courseSlug, tutorId: tutor._id, tutorName: tutor.name },
+    });
+  } catch (err) {
+    console.error("PATCH /api/admin/enrollments/:id failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }

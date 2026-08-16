@@ -270,8 +270,8 @@ describe("GET /api/admin/students", () => {
     expect(row.teachers).toHaveLength(2);
     expect(row.teachers).toEqual(
       expect.arrayContaining([
-        { courseSlug: "kannada", name: "Sudi" },
-        { courseSlug: "hindi", name: "Pawan" },
+        expect.objectContaining({ courseSlug: "kannada", name: "Sudi" }),
+        expect.objectContaining({ courseSlug: "hindi", name: "Pawan" }),
       ])
     );
   });

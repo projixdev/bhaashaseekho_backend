@@ -11,6 +11,7 @@ import {
   createStudent,
   createTeacher,
   createEnrollment,
+  createClass,
   createAdminUser,
   signToken,
   signAdminToken,
@@ -23,6 +24,8 @@ jest.unstable_mockModule("../src/services/brevoService.js", () => ({
 
 const { default: app } = await import("../src/app.js");
 const { default: User } = await import("../src/models/User.js");
+const { default: Enrollment } = await import("../src/models/Enrollment.js");
+const { default: Class } = await import("../src/models/Class.js");
 
 beforeAll(connectTestDB);
 afterEach(clearTestDB);
@@ -548,5 +551,176 @@ describe("deactivated users still appear in the list endpoints, badged via isAct
     const row = res.body.students.find((s) => s.name === "Deactivated Student");
     expect(row).toBeTruthy();
     expect(row.isActive).toBe(false);
+  });
+});
+
+describe("POST /api/admin/students/:id/enrollments", () => {
+  function enrollReq(studentId, body, token) {
+    return request(app).post(`/api/admin/students/${studentId}/enrollments`).set("Authorization", `Bearer ${token}`).send(body);
+  }
+
+  test("valid enrollment → 201, enrollment created with the chosen course/tutor", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const tutor = await createTeacher({ name: "Founder" });
+
+    const res = await enrollReq(student._id, { courseSlug: "Kannada", tutorId: tutor._id.toString() }, token);
+    expect(res.status).toBe(201);
+    expect(res.body.enrollment).toMatchObject({ courseSlug: "kannada", tutorId: tutor._id.toString(), tutorName: "Founder" });
+
+    const stored = await Enrollment.findOne({ student: student._id, courseSlug: "kannada" });
+    expect(stored).not.toBeNull();
+    expect(stored.tutor.toString()).toBe(tutor._id.toString());
+    expect(stored.status).toBe("active");
+  });
+
+  test("a second course for the same student creates a second, independent enrollment", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const tutor1 = await createTeacher();
+    const tutor2 = await createTeacher();
+
+    await enrollReq(student._id, { courseSlug: "kannada", tutorId: tutor1._id.toString() }, token);
+    const res = await enrollReq(student._id, { courseSlug: "hindi", tutorId: tutor2._id.toString() }, token);
+    expect(res.status).toBe(201);
+
+    expect(await Enrollment.countDocuments({ student: student._id })).toBe(2);
+  });
+
+  test("re-enrolling in the same course updates the tutor instead of erroring", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const original = await createTeacher();
+    const replacement = await createTeacher();
+
+    await enrollReq(student._id, { courseSlug: "kannada", tutorId: original._id.toString() }, token);
+    const res = await enrollReq(student._id, { courseSlug: "kannada", tutorId: replacement._id.toString() }, token);
+    expect(res.status).toBe(201);
+
+    expect(await Enrollment.countDocuments({ student: student._id, courseSlug: "kannada" })).toBe(1);
+    const stored = await Enrollment.findOne({ student: student._id, courseSlug: "kannada" });
+    expect(stored.tutor.toString()).toBe(replacement._id.toString());
+  });
+
+  test("missing courseSlug → 400", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const tutor = await createTeacher();
+
+    const res = await enrollReq(student._id, { tutorId: tutor._id.toString() }, token);
+    expect(res.status).toBe(400);
+    expect(res.body.errors.courseSlug).toBeTruthy();
+  });
+
+  test("missing tutorId → 400", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+
+    const res = await enrollReq(student._id, { courseSlug: "kannada" }, token);
+    expect(res.status).toBe(400);
+    expect(res.body.errors.tutorId).toBeTruthy();
+  });
+
+  test("tutorId pointing at a student, not a teacher → 400", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const notATeacher = await createStudent();
+
+    const res = await enrollReq(student._id, { courseSlug: "kannada", tutorId: notATeacher._id.toString() }, token);
+    expect(res.status).toBe(400);
+    expect(res.body.errors.tutorId).toBeTruthy();
+  });
+
+  test("unknown student id → 404", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+    const tutor = await createTeacher();
+
+    const res = await enrollReq(teacher._id, { courseSlug: "kannada", tutorId: tutor._id.toString() }, token); // wrong role
+    expect(res.status).toBe(404);
+  });
+
+  test("non-admin token → 403", async () => {
+    const student = await createStudent();
+    const tutor = await createTeacher();
+    const res = await enrollReq(student._id, { courseSlug: "kannada", tutorId: tutor._id.toString() }, signToken(tutor));
+    expect(res.status).toBe(403);
+  });
+
+  test("no token → 401", async () => {
+    const student = await createStudent();
+    const res = await request(app).post(`/api/admin/students/${student._id}/enrollments`).send({ courseSlug: "kannada" });
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("PATCH /api/admin/enrollments/:id — reassign tutor (founder-hands-off-to-a-permanent-tutor flow)", () => {
+  function reassignReq(enrollmentId, body, token) {
+    return request(app).patch(`/api/admin/enrollments/${enrollmentId}`).set("Authorization", `Bearer ${token}`).send(body);
+  }
+
+  test("valid reassignment → 200, tutor updated", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const founder = await createTeacher({ name: "Founder" });
+    const newTutor = await createTeacher({ name: "New Tutor" });
+    const enrollment = await createEnrollment({ student, tutor: founder });
+
+    const res = await reassignReq(enrollment._id, { tutorId: newTutor._id.toString() }, token);
+    expect(res.status).toBe(200);
+    expect(res.body.enrollment).toMatchObject({ tutorId: newTutor._id.toString(), tutorName: "New Tutor" });
+
+    const stored = await Enrollment.findById(enrollment._id);
+    expect(stored.tutor.toString()).toBe(newTutor._id.toString());
+  });
+
+  test("past classes keep their original tutor — reassignment never rewrites class history", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const founder = await createTeacher();
+    const newTutor = await createTeacher();
+    const enrollment = await createEnrollment({ student, tutor: founder });
+    const pastClass = await createClass({ tutor: founder, students: [student], scheduledAt: new Date(), status: "completed" });
+
+    await reassignReq(enrollment._id, { tutorId: newTutor._id.toString() }, token);
+
+    const storedClass = await Class.findById(pastClass._id);
+    expect(storedClass.tutor.toString()).toBe(founder._id.toString());
+  });
+
+  test("missing tutorId → 400", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const founder = await createTeacher();
+    const enrollment = await createEnrollment({ student, tutor: founder });
+
+    const res = await reassignReq(enrollment._id, {}, token);
+    expect(res.status).toBe(400);
+    expect(res.body.errors.tutorId).toBeTruthy();
+  });
+
+  test("unknown enrollment id → 404", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const res = await reassignReq(student._id, { tutorId: student._id.toString() }, token); // not a real enrollment id
+    expect(res.status).toBe(404);
+  });
+
+  test("non-admin token → 403", async () => {
+    const student = await createStudent();
+    const founder = await createTeacher();
+    const enrollment = await createEnrollment({ student, tutor: founder });
+
+    const res = await reassignReq(enrollment._id, { tutorId: founder._id.toString() }, signToken(founder));
+    expect(res.status).toBe(403);
+  });
+
+  test("no token → 401", async () => {
+    const student = await createStudent();
+    const founder = await createTeacher();
+    const enrollment = await createEnrollment({ student, tutor: founder });
+
+    const res = await request(app).patch(`/api/admin/enrollments/${enrollment._id}`).send({ tutorId: founder._id.toString() });
+    expect(res.status).toBe(401);
   });
 });
