@@ -8,7 +8,7 @@ import { env } from "../config/env.js";
 
 function buildOwnerEmailHtml(body) {
   const inner = `
-    <h2 style="margin:0 0 16px; font-size:18px; color:#0f172a;">New contact message</h2>
+    <h2 style="margin:0 0 16px; font-size:18px; color:#f1f5f9;">New contact message</h2>
     <p style="margin:0 0 8px;"><strong>Name:</strong> ${escapeHtml(body.name)}</p>
     <p style="margin:0 0 8px;"><strong>Email:</strong> ${escapeHtml(body.email)}</p>
     <p style="margin:16px 0 4px;"><strong>Message:</strong></p>
@@ -24,7 +24,7 @@ function buildUserConfirmationHtml(body) {
     <p style="margin:0 0 16px;">Hi ${escapeHtml(body.name)},</p>
     <p style="margin:0 0 20px;">Thanks for reaching out to Bhaasha Seekho! We've received your message and someone from our team will get back to you within 24 hours.</p>
     ${whatsappUrl ? `<p style="margin:0 0 24px;">${emailButton("Chat on WhatsApp", whatsappUrl)}</p>` : ""}
-    <p style="margin:0 0 4px; font-size:13px; color:#64748b;">Your message:</p>
+    <p style="margin:0 0 4px; font-size:13px; color:#94a3b8;">Your message:</p>
     <p style="margin:0 0 20px; padding:12px; background-color:#f8fafc; border-radius:6px; color:#334155; font-size:14px;">${escapeHtml(body.message || "(no message provided)")}</p>
     <p style="margin:0;">— The Bhaasha Seekho Team</p>
   `;

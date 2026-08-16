@@ -58,8 +58,8 @@ function buildOtpEmailHtml(otp) {
   const minutes = Math.round(OTP_TTL_MS / 60000);
   const inner = `
     <p style="margin:0 0 16px;">Your login code is:</p>
-    <p style="margin:0 0 20px; font-size:28px; font-weight:bold; letter-spacing:4px; color:#0f172a;">${otp}</p>
-    <p style="margin:0; color:#64748b; font-size:13px;">Valid for ${minutes} minutes. Don't share this code with anyone.</p>
+    <p style="margin:0 0 20px; font-size:28px; font-weight:bold; letter-spacing:4px; color:#ffffff;">${otp}</p>
+    <p style="margin:0; color:#94a3b8; font-size:13px;">Valid for ${minutes} minutes. Don't share this code with anyone.</p>
   `;
   return renderEmailLayout({ preheader: `Your login code: ${otp}`, bodyHtml: inner });
 }

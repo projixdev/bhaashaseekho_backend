@@ -3,17 +3,17 @@ import Lead from "../models/Lead.js";
 import { sendTransactionalEmail } from "../services/brevoService.js";
 import { isHoneypotTriggered } from "../utils/honeypot.js";
 import { validateLeadInput, escapeHtml } from "../utils/validation.js";
-import { renderEmailLayout, emailButton, getWhatsAppUrl } from "../services/emailTemplates.js";
+import { renderEmailLayout, emailButton, emailInfoBox, getWhatsAppUrl } from "../services/emailTemplates.js";
 import { env } from "../config/env.js";
 
 function buildOwnerEmailHtml(body) {
   const inner = `
-    <h2 style="margin:0 0 16px; font-size:18px; color:#0f172a;">New lead</h2>
+    <h2 style="margin:0 0 16px; font-size:18px; color:#f1f5f9;">New lead</h2>
     <p style="margin:0 0 8px;"><strong>Name:</strong> ${escapeHtml(body.name)}</p>
     <p style="margin:0 0 8px;"><strong>Phone:</strong> ${escapeHtml(body.phone)}</p>
     <p style="margin:0 0 8px;"><strong>Email:</strong> ${escapeHtml(body.email || "-")}</p>
     <p style="margin:0 0 8px;"><strong>Interested in:</strong> ${escapeHtml(body.interest)}</p>
-    <p style="margin:16px 0 0; font-size:13px; color:#64748b;">UTM: ${escapeHtml(body.utmSource || "-")} /
+    <p style="margin:16px 0 0; font-size:13px; color:#94a3b8;">UTM: ${escapeHtml(body.utmSource || "-")} /
       ${escapeHtml(body.utmMedium || "-")} / ${escapeHtml(body.utmCampaign || "-")}</p>
   `;
   return renderEmailLayout({ preheader: `New lead: ${body.name} (${body.interest})`, bodyHtml: inner });
@@ -23,19 +23,27 @@ function buildOwnerEmailHtml(body) {
 // decisions) — "login credentials" here means "your phone number is
 // enrolled and ready," not a password being generated. Worded to stay
 // accurate to that while still matching what the founder asked visitors to
-// hear: a concrete 24-hour promise, not a vague "we'll reach out."
+// hear: a concrete 24-hour promise, not a vague "we'll reach out." The info
+// box shows what we actually have at this stage (interest + phone) — no
+// start date/batch mode exists yet, since those are set later when an
+// admin creates the real account.
 function buildUserConfirmationHtml(body) {
   const whatsappUrl = getWhatsAppUrl();
 
   const inner = `
-    <p style="margin:0 0 16px;">Hi ${escapeHtml(body.name)},</p>
-    <p style="margin:0 0 20px;">Thanks for your interest in learning ${escapeHtml(body.interest)} with Bhaasha Seekho! We've received your details — your demo login will be set up and shared with you within 24 hours.</p>
-    <p style="margin:0 0 20px;">Once it's ready, just open the Bhaasha Seekho app and log in with this phone number: <strong>${escapeHtml(body.phone)}</strong>. We'll email you a one-time code each time you log in, so there's no password to remember.</p>
+    <p style="margin:0 0 20px;">Hi ${escapeHtml(body.name)}, thanks for your interest in learning with Bhaasha Seekho! We've received your details — your demo login will be set up and shared with you within 24 hours.</p>
+    ${emailInfoBox([
+      { label: "Interested in", value: escapeHtml(body.interest) },
+      { label: "Contact number", value: escapeHtml(body.phone) },
+    ])}
+    <p style="margin:24px 0 20px;">Once it's ready, just open the Bhaasha Seekho app and log in with the phone number above. We'll email you a one-time code each time you log in, so there's no password to remember.</p>
     ${whatsappUrl ? `<p style="margin:0 0 8px;">${emailButton("Chat on WhatsApp", whatsappUrl)}</p>` : ""}
     <p style="margin:24px 0 0;">— The Bhaasha Seekho Team</p>
   `;
   return renderEmailLayout({
     preheader: "Your demo login will be ready within 24 hours.",
+    eyebrow: "You're in",
+    heading: "Enrollment Received",
     bodyHtml: inner,
   });
 }
