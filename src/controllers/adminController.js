@@ -55,6 +55,22 @@ export async function adminLogin(req, res) {
   }
 }
 
+// Shared by every create/edit route below whose email or phone can collide
+// with another account (both fields are unique-indexed on User) — reports
+// whichever field actually collided instead of assuming it was the phone.
+// Returns true (and has already written the response) when it handled a
+// duplicate-key error; false means the caller should rethrow/handle it.
+function respondDuplicateKeyError(err, res) {
+  if (err.code !== 11000) return false;
+  const field = err.keyPattern?.email ? "email" : "phone";
+  res.status(409).json({
+    success: false,
+    message:
+      field === "email" ? "This email is already registered to another account." : "This phone number is already registered.",
+  });
+  return true;
+}
+
 // Moves teacher creation off scripts/createUser.js and into the admin
 // dashboard — same fields/defaults as that script's --role teacher path
 // (name, phone, role: "teacher", email if given, no password, no
@@ -106,19 +122,7 @@ export async function createTeacher(req, res) {
         ...(normalizedEmail ? { email: normalizedEmail } : {}),
       });
     } catch (err) {
-      if (err.code === 11000) {
-        // phone and email are both unique-indexed — report whichever one
-        // actually collided instead of assuming it was the phone.
-        const field = err.keyPattern?.email ? "email" : "phone";
-        res.status(409).json({
-          success: false,
-          message:
-            field === "email"
-              ? "This email is already registered to another account."
-              : "This phone number is already registered.",
-        });
-        return;
-      }
+      if (respondDuplicateKeyError(err, res)) return;
       throw err;
     }
 
@@ -132,6 +136,38 @@ export async function createTeacher(req, res) {
   }
 }
 
+// Shared row shape for both the teachers list and the single-teacher detail
+// route, so the two can never silently drift into different field sets.
+async function buildTeacherRows(teachers) {
+  const teacherIds = teachers.map((t) => t._id);
+
+  const [enrollments, classes] = await Promise.all([
+    // Active enrollments only — a paused/completed one isn't "currently
+    // assigned" for the founder's purposes.
+    Enrollment.find({ tutor: { $in: teacherIds }, status: "active" }).select("tutor").lean(),
+    Class.find({ tutor: { $in: teacherIds } }).select("tutor status").lean(),
+  ]);
+
+  return teachers.map((t) => {
+    const idStr = t._id.toString();
+    const ownClasses = classes.filter((c) => c.tutor.toString() === idStr);
+    return {
+      _id: t._id,
+      name: t.name,
+      phone: t.phone,
+      email: t.email || null,
+      // A doc written before isActive existed never had it persisted at
+      // all (missing key, not false) — same fallback pattern already used
+      // for completedClassCount/isTrial below, so a legacy account reads
+      // as active rather than silently vanishing behind an "Inactive" badge.
+      isActive: t.isActive !== false,
+      assignedStudentCount: enrollments.filter((e) => e.tutor.toString() === idStr).length,
+      classesScheduled: ownClasses.length,
+      classesCompleted: ownClasses.filter((c) => c.status === "completed").length,
+    };
+  });
+}
+
 // Plain find() + JS grouping rather than aggregation pipelines — this is
 // founder-scale data (tens of teachers/students), and a readable, easy-to-
 // verify query beats a cleverer one nobody asked for.
@@ -139,33 +175,202 @@ export async function listAdminTeachers(req, res) {
   try {
     await connectDB();
 
-    const teachers = await User.find({ role: "teacher" }).select("name phone email").sort({ name: 1 }).lean();
-    const teacherIds = teachers.map((t) => t._id);
-
-    const [enrollments, classes] = await Promise.all([
-      // Active enrollments only — a paused/completed one isn't "currently
-      // assigned" for the founder's purposes.
-      Enrollment.find({ tutor: { $in: teacherIds }, status: "active" }).select("tutor").lean(),
-      Class.find({ tutor: { $in: teacherIds } }).select("tutor status").lean(),
-    ]);
-
-    const result = teachers.map((t) => {
-      const idStr = t._id.toString();
-      const ownClasses = classes.filter((c) => c.tutor.toString() === idStr);
-      return {
-        _id: t._id,
-        name: t.name,
-        phone: t.phone,
-        email: t.email || null,
-        assignedStudentCount: enrollments.filter((e) => e.tutor.toString() === idStr).length,
-        classesScheduled: ownClasses.length,
-        classesCompleted: ownClasses.filter((c) => c.status === "completed").length,
-      };
-    });
+    // Deactivated teachers stay in this list (the dashboard shows them
+    // greyed-out via isActive, not removed) — no isActive filter here.
+    const teachers = await User.find({ role: "teacher" }).select("name phone email isActive").sort({ name: 1 }).lean();
+    const result = await buildTeacherRows(teachers);
 
     res.json({ success: true, teachers: result });
   } catch (err) {
     console.error("GET /api/admin/teachers failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+export async function getAdminTeacher(req, res) {
+  try {
+    await connectDB();
+
+    const teacher = await User.findOne({ _id: req.params.id, role: "teacher" })
+      .select("name phone email isActive")
+      .lean();
+    if (!teacher) {
+      res.status(404).json({ success: false, message: "Teacher not found." });
+      return;
+    }
+
+    const [row] = await buildTeacherRows([teacher]);
+    res.json({ success: true, teacher: row });
+  } catch (err) {
+    console.error("GET /api/admin/teachers/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Partial update — only the fields actually present in the body are
+// touched. Same validation rules as createTeacher (name/phone required if
+// given, email optional-format-checked), plus the same duplicate-phone/
+// duplicate-email 409 behavior. email: "" explicitly clears a teacher's
+// email (unlike students, below, whose email can never be blank — it's
+// their only way to receive a login code).
+export async function updateTeacher(req, res) {
+  try {
+    await connectDB();
+
+    const teacher = await User.findOne({ _id: req.params.id, role: "teacher" });
+    if (!teacher) {
+      res.status(404).json({ success: false, message: "Teacher not found." });
+      return;
+    }
+
+    const { name, phone, email } = req.body;
+    const errors = {};
+
+    if (name !== undefined) {
+      if (typeof name !== "string" || !name.trim()) errors.name = "Name is required.";
+      else if (name.trim().length > 120) errors.name = "Name is too long.";
+    }
+    if (phone !== undefined) {
+      const { valid: phoneValid, errors: phoneErrors } = validatePhoneInput({ phone });
+      if (!phoneValid) Object.assign(errors, phoneErrors);
+    }
+    if (email !== undefined && email !== null && email !== "") {
+      if (typeof email !== "string" || !EMAIL_RE.test(email.trim())) {
+        errors.email = "Please enter a valid email address.";
+      } else if (email.trim().length > 160) {
+        errors.email = "Email is too long.";
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      res.status(400).json({ success: false, errors });
+      return;
+    }
+
+    const $set = {};
+    const $unset = {};
+    if (name !== undefined) $set.name = name.trim();
+    if (phone !== undefined) $set.phone = normalizePhone(phone);
+    if (email !== undefined) {
+      if (email) $set.email = email.trim().toLowerCase();
+      else $unset.email = "";
+    }
+
+    let updated;
+    try {
+      updated = await User.findByIdAndUpdate(
+        teacher._id,
+        { ...(Object.keys($set).length ? { $set } : {}), ...(Object.keys($unset).length ? { $unset } : {}) },
+        { returnDocument: "after", runValidators: true }
+      );
+    } catch (err) {
+      if (respondDuplicateKeyError(err, res)) return;
+      throw err;
+    }
+
+    res.json({
+      success: true,
+      teacher: { _id: updated._id, name: updated.name, phone: updated.phone, email: updated.email || null, isActive: updated.isActive !== false },
+    });
+  } catch (err) {
+    console.error("PATCH /api/admin/teachers/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Soft delete only — a teacher may have Enrollment/Class/Assignment history
+// that a hard delete would orphan. Blocked while the teacher still has
+// active enrollments unless the caller explicitly passes ?force=true (e.g.
+// the founder has already reassigned the roster and just wants the account
+// gone from active use). Deactivating never touches those Enrollment docs
+// itself — that's a separate, deliberate action, not a side effect here.
+export async function deleteTeacher(req, res) {
+  try {
+    await connectDB();
+
+    const teacher = await User.findOne({ _id: req.params.id, role: "teacher" });
+    if (!teacher) {
+      res.status(404).json({ success: false, message: "Teacher not found." });
+      return;
+    }
+
+    if (req.query.force !== "true") {
+      const hasActiveEnrollment = await Enrollment.exists({ tutor: teacher._id, status: "active" });
+      if (hasActiveEnrollment) {
+        res.status(409).json({
+          success: false,
+          message: "This teacher has active students assigned. Reassign them first, or pass ?force=true to deactivate anyway.",
+        });
+        return;
+      }
+    }
+
+    teacher.isActive = false;
+    await teacher.save();
+
+    res.json({ success: true, teacher: { _id: teacher._id, name: teacher.name, isActive: false } });
+  } catch (err) {
+    console.error("DELETE /api/admin/teachers/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Admin-created student — the enrollment entry point (ROADMAP.md: the
+// website is marketing-only and never creates accounts itself, so this is
+// how a student who's enrolled becomes a real, login-capable account).
+// Unlike createTeacher, email is required here rather than optional: a
+// student's phone is the login identifier but the OTP itself is only ever
+// delivered by email (authController.sendOtp), so a student created without
+// one can never actually log in until an admin comes back to add it.
+// Requiring it up front avoids silently creating a dead-end account.
+export async function createStudent(req, res) {
+  try {
+    const { name, phone, email } = req.body;
+    const errors = {};
+
+    if (typeof name !== "string" || !name.trim()) {
+      errors.name = "Name is required.";
+    } else if (name.trim().length > 120) {
+      errors.name = "Name is too long.";
+    }
+
+    const { valid: phoneValid, errors: phoneErrors } = validatePhoneInput({ phone });
+    if (!phoneValid) Object.assign(errors, phoneErrors);
+
+    if (typeof email !== "string" || !email.trim()) {
+      errors.email = "Email is required so the student can receive login codes.";
+    } else if (!EMAIL_RE.test(email.trim())) {
+      errors.email = "Please enter a valid email address.";
+    } else if (email.trim().length > 160) {
+      errors.email = "Email is too long.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      res.status(400).json({ success: false, errors });
+      return;
+    }
+
+    await connectDB();
+
+    let student;
+    try {
+      student = await User.create({
+        phone: normalizePhone(phone),
+        name: name.trim(),
+        role: "student",
+        email: email.trim().toLowerCase(),
+      });
+    } catch (err) {
+      if (respondDuplicateKeyError(err, res)) return;
+      throw err;
+    }
+
+    res.status(201).json({
+      success: true,
+      student: { _id: student._id, name: student.name, phone: student.phone, email: student.email },
+    });
+  } catch (err) {
+    console.error("POST /api/admin/students failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }
@@ -183,65 +388,190 @@ function overallAssignmentStatus(items) {
   return "reviewed";
 }
 
+// Shared row shape for both the students list and the single-student detail
+// route, mirroring buildTeacherRows above.
+async function buildStudentRows(students) {
+  const studentIds = students.map((s) => s._id);
+
+  const [assignments, enrollments] = await Promise.all([
+    Assignment.find({ student: { $in: studentIds } }).select("student type status").lean(),
+    // Active enrollments only — same "currently assigned" definition
+    // buildTeacherRows already uses. populate("tutor", "name") since a
+    // student can have a different tutor per course and the page needs to
+    // show all of them, not just one.
+    Enrollment.find({ student: { $in: studentIds }, status: "active" })
+      .select("student courseSlug tutor")
+      .populate("tutor", "name")
+      .lean(),
+  ]);
+
+  return students.map((s) => {
+    const idStr = s._id.toString();
+    const own = assignments.filter((a) => a.student.toString() === idStr);
+    const bucket = (type) => {
+      const items = own.filter((a) => a.type === type);
+      return { assigned: items.length, submitted: items.filter((a) => a.status !== "assigned").length };
+    };
+
+    return {
+      _id: s._id,
+      name: s.name,
+      phone: s.phone,
+      email: s.email || null,
+      // .lean() returns the raw document — a student created before
+      // completedClassCount/isTrial/isActive existed never had them
+      // actually written, so the key is missing outright, not 0/false.
+      // Same fallback assignmentController.js's gate already relies on.
+      completedClassCount: s.completedClassCount ?? 0,
+      // Exposed explicitly rather than leaving the admin UI to hardcode
+      // "10" — same constant the real student-facing gate reads from, not
+      // a second copy of the threshold.
+      assessmentsUnlockAt: ASSESSMENT_UNLOCK_AFTER_CLASSES,
+      assessmentsUnlocked: (s.completedClassCount ?? 0) >= ASSESSMENT_UNLOCK_AFTER_CLASSES,
+      homework: bucket("homework"),
+      assessments: bucket("assessment"),
+      assignmentStatus: overallAssignmentStatus(own),
+      teachers: enrollments
+        .filter((e) => e.student.toString() === idStr)
+        .map((e) => ({ courseSlug: e.courseSlug, name: e.tutor?.name ?? null })),
+      isTrial: Boolean(s.isTrial),
+      accessExpiresAt: s.isTrial ? s.accessExpiresAt : null,
+      isActive: s.isActive !== false,
+    };
+  });
+}
+
 export async function listAdminStudents(req, res) {
   try {
     await connectDB();
 
+    // Deactivated students stay in this list too, same as teachers above.
     const students = await User.find({ role: "student" })
-      .select("name phone email completedClassCount isTrial accessExpiresAt")
+      .select("name phone email completedClassCount isTrial accessExpiresAt isActive")
       .sort({ name: 1 })
       .lean();
-    const studentIds = students.map((s) => s._id);
-
-    const [assignments, enrollments] = await Promise.all([
-      Assignment.find({ student: { $in: studentIds } }).select("student type status").lean(),
-      // Active enrollments only — same "currently assigned" definition
-      // listAdminTeachers already uses. populate("tutor", "name") since a
-      // student can have a different tutor per course and the page needs
-      // to show all of them, not just one.
-      Enrollment.find({ student: { $in: studentIds }, status: "active" })
-        .select("student courseSlug tutor")
-        .populate("tutor", "name")
-        .lean(),
-    ]);
-
-    const result = students.map((s) => {
-      const idStr = s._id.toString();
-      const own = assignments.filter((a) => a.student.toString() === idStr);
-      const bucket = (type) => {
-        const items = own.filter((a) => a.type === type);
-        return { assigned: items.length, submitted: items.filter((a) => a.status !== "assigned").length };
-      };
-
-      return {
-        _id: s._id,
-        name: s.name,
-        phone: s.phone,
-        email: s.email || null,
-        // .lean() returns the raw document — a student created before
-        // completedClassCount/isTrial existed (Phases 13/14) never had them
-        // actually written, so the key is missing outright, not 0/false.
-        // Same fallback assignmentController.js's gate already relies on.
-        completedClassCount: s.completedClassCount ?? 0,
-        // Exposed explicitly rather than leaving the admin UI to hardcode
-        // "10" — same constant the real student-facing gate reads from, not
-        // a second copy of the threshold.
-        assessmentsUnlockAt: ASSESSMENT_UNLOCK_AFTER_CLASSES,
-        assessmentsUnlocked: (s.completedClassCount ?? 0) >= ASSESSMENT_UNLOCK_AFTER_CLASSES,
-        homework: bucket("homework"),
-        assessments: bucket("assessment"),
-        assignmentStatus: overallAssignmentStatus(own),
-        teachers: enrollments
-          .filter((e) => e.student.toString() === idStr)
-          .map((e) => ({ courseSlug: e.courseSlug, name: e.tutor?.name ?? null })),
-        isTrial: Boolean(s.isTrial),
-        accessExpiresAt: s.isTrial ? s.accessExpiresAt : null,
-      };
-    });
+    const result = await buildStudentRows(students);
 
     res.json({ success: true, students: result });
   } catch (err) {
     console.error("GET /api/admin/students failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+export async function getAdminStudent(req, res) {
+  try {
+    await connectDB();
+
+    const student = await User.findOne({ _id: req.params.id, role: "student" })
+      .select("name phone email completedClassCount isTrial accessExpiresAt isActive")
+      .lean();
+    if (!student) {
+      res.status(404).json({ success: false, message: "Student not found." });
+      return;
+    }
+
+    const [row] = await buildStudentRows([student]);
+    res.json({ success: true, student: row });
+  } catch (err) {
+    console.error("GET /api/admin/students/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Partial update — only the fields actually present in the body are
+// touched. Unlike updateTeacher, email can never be cleared here (empty
+// string is a validation error, not an unset) — a student's only login
+// path depends on always having one on file.
+export async function updateStudent(req, res) {
+  try {
+    await connectDB();
+
+    const student = await User.findOne({ _id: req.params.id, role: "student" });
+    if (!student) {
+      res.status(404).json({ success: false, message: "Student not found." });
+      return;
+    }
+
+    const { name, phone, email } = req.body;
+    const errors = {};
+
+    if (name !== undefined) {
+      if (typeof name !== "string" || !name.trim()) errors.name = "Name is required.";
+      else if (name.trim().length > 120) errors.name = "Name is too long.";
+    }
+    if (phone !== undefined) {
+      const { valid: phoneValid, errors: phoneErrors } = validatePhoneInput({ phone });
+      if (!phoneValid) Object.assign(errors, phoneErrors);
+    }
+    if (email !== undefined) {
+      if (typeof email !== "string" || !email.trim()) {
+        errors.email = "Email is required so the student can receive login codes.";
+      } else if (!EMAIL_RE.test(email.trim())) {
+        errors.email = "Please enter a valid email address.";
+      } else if (email.trim().length > 160) {
+        errors.email = "Email is too long.";
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      res.status(400).json({ success: false, errors });
+      return;
+    }
+
+    const $set = {};
+    if (name !== undefined) $set.name = name.trim();
+    if (phone !== undefined) $set.phone = normalizePhone(phone);
+    if (email !== undefined) $set.email = email.trim().toLowerCase();
+
+    let updated;
+    try {
+      updated = await User.findByIdAndUpdate(student._id, { $set }, { returnDocument: "after", runValidators: true });
+    } catch (err) {
+      if (respondDuplicateKeyError(err, res)) return;
+      throw err;
+    }
+
+    res.json({
+      success: true,
+      student: { _id: updated._id, name: updated.name, phone: updated.phone, email: updated.email || null, isActive: updated.isActive !== false },
+    });
+  } catch (err) {
+    console.error("PATCH /api/admin/students/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Soft delete only, same reasoning as deleteTeacher — a student may have
+// Class/Assignment history a hard delete would orphan. Blocked while the
+// student still has an active enrollment unless ?force=true.
+export async function deleteStudent(req, res) {
+  try {
+    await connectDB();
+
+    const student = await User.findOne({ _id: req.params.id, role: "student" });
+    if (!student) {
+      res.status(404).json({ success: false, message: "Student not found." });
+      return;
+    }
+
+    if (req.query.force !== "true") {
+      const hasActiveEnrollment = await Enrollment.exists({ student: student._id, status: "active" });
+      if (hasActiveEnrollment) {
+        res.status(409).json({
+          success: false,
+          message: "This student has an active enrollment. End it first, or pass ?force=true to deactivate anyway.",
+        });
+        return;
+      }
+    }
+
+    student.isActive = false;
+    await student.save();
+
+    res.json({ success: true, student: { _id: student._id, name: student.name, isActive: false } });
+  } catch (err) {
+    console.error("DELETE /api/admin/students/:id failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }

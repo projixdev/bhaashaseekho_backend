@@ -18,6 +18,16 @@ const UserSchema = new mongoose.Schema(
     // before adding this). Set via scripts/setAdmin.js, never self-serve.
     isAdmin: { type: Boolean, default: false },
 
+    // Soft-delete flag for the admin dashboard's Teacher/Student CRUD
+    // (ROADMAP.md admin-dashboard rebuild) — a teacher/student may have
+    // Enrollment/Class/Assignment history a hard delete would orphan, so
+    // "deleting" one just flips this instead. Deactivated accounts still
+    // show up in the admin lists (greyed out), just not selectable for new
+    // work. Not currently enforced on login (OTP auth flow is untouched by
+    // this phase) — an admin who deactivates someone should also revoke
+    // their access another way if that's needed.
+    isActive: { type: Boolean, default: true },
+
     // bcrypt hash, only ever set for isAdmin accounts (ROADMAP.md Phase 17
     // — POST /api/admin/login, for the website dashboard; students/teachers
     // never get one, OTP stays their only login method). select: false so a

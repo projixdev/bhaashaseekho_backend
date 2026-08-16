@@ -7,10 +7,11 @@
 // Usage:
 //   node scripts/setAdmin.js --phone 9876543210
 //   node scripts/setAdmin.js --phone 9876543210 --revoke
+//   node scripts/setAdmin.js --email founder@example.com
 import mongoose from "mongoose";
 import { connectDB } from "../src/config/db.js";
 import User from "../src/models/User.js";
-import { normalizePhone, PHONE_DIGITS_RE } from "../src/utils/validation.js";
+import { normalizePhone, PHONE_DIGITS_RE, EMAIL_RE } from "../src/utils/validation.js";
 
 function parseArgs(argv) {
   const args = {};
@@ -31,24 +32,38 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  if (!args.phone) {
-    console.error("Usage: node scripts/setAdmin.js --phone <digits> [--revoke]");
+  if (!args.phone && !args.email) {
+    console.error("Usage: node scripts/setAdmin.js --phone <digits> | --email <address> [--revoke]");
     process.exitCode = 1;
     return;
   }
 
-  const phone = normalizePhone(args.phone);
-  if (!PHONE_DIGITS_RE.test(phone)) {
-    console.error(`Invalid phone number: ${args.phone}`);
-    process.exitCode = 1;
-    return;
+  let query;
+  if (args.email) {
+    const email = String(args.email).trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) {
+      console.error(`Invalid email address: ${args.email}`);
+      process.exitCode = 1;
+      return;
+    }
+    query = { email };
+  } else {
+    const phone = normalizePhone(args.phone);
+    if (!PHONE_DIGITS_RE.test(phone)) {
+      console.error(`Invalid phone number: ${args.phone}`);
+      process.exitCode = 1;
+      return;
+    }
+    query = { phone };
   }
 
   await connectDB();
 
-  const user = await User.findOne({ phone });
+  const user = await User.findOne(query);
   if (!user) {
-    console.error(`No user found with phone ${args.phone}. Create the account first (scripts/createUser.js).`);
+    console.error(
+      `No user found with ${args.email ? `email ${args.email}` : `phone ${args.phone}`}. Create the account first (scripts/createUser.js).`
+    );
     process.exitCode = 1;
     await mongoose.disconnect();
     return;
