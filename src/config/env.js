@@ -54,4 +54,20 @@ export const env = {
   get cloudinaryApiSecret() {
     return required("CLOUDINARY_API_SECRET");
   },
+
+  // Google Calendar (Phase 19 — Meet link generation), service-account auth,
+  // only needed once a class is actually scheduled. Private keys copied from
+  // a downloaded service-account JSON file have real "\n" escape sequences
+  // once they pass through a .env value (env vars can't hold literal
+  // newlines) — swapped back to real newlines here, the standard fix for
+  // this exact googleapis/JWT gotcha.
+  get googleServiceAccountEmail() {
+    return required("GOOGLE_SERVICE_ACCOUNT_EMAIL");
+  },
+  get googleServiceAccountPrivateKey() {
+    return required("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY").replace(/\\n/g, "\n");
+  },
+  get googleCalendarId() {
+    return required("GOOGLE_CALENDAR_ID");
+  },
 };

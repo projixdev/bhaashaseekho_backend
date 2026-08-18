@@ -9,8 +9,16 @@ const ClassSchema = new mongoose.Schema(
     scheduledAt: { type: Date, required: true },
     durationMinutes: { type: Number, default: 45 },
     // Zoom/Google Meet link — classes run on those platforms already, no
-    // in-app video needed (see ROADMAP.md Phase 4).
+    // in-app video needed (see ROADMAP.md Phase 4). Google Meet is the
+    // current/interim provider (Phase 19); Zoom stays a planned future
+    // paid add-on, not replaced by this.
     meetingLink: { type: String, trim: true, default: "" },
+    // The Google Calendar event backing meetingLink, when the link was
+    // auto-generated via the Calendar API rather than pasted in manually
+    // (scripts/scheduleClass.js's --link override leaves this null). Needed
+    // to patch/delete that event on reschedule/cancel so the calendar side
+    // doesn't go stale once the class itself changes.
+    googleCalendarEventId: { type: String, default: null },
     status: { type: String, enum: ["upcoming", "live", "completed", "cancelled", "postponed"], default: "upcoming" },
     // Reminder windows already fired for this class (e.g. ["60min", "30min"])
     // — checked by jobs/classReminders.js before sending, so a cron tick that

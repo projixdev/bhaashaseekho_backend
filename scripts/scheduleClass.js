@@ -11,11 +11,19 @@
 // Usage:
 //   node scripts/scheduleClass.js --tutor 9876543210 --students 9123456789 --subject "Hindi Conversation" --at "2026-08-15T18:00" --duration 60 --link https://meet.google.com/xyz
 //   node scripts/scheduleClass.js --tutor 9876543210 --students 9123456789,9223344556 --subject "Hindi Conversation" --at "2026-08-15T18:00" --batch group
+//
+// --link is optional — omit it and a Google Meet link is generated
+// automatically via the Calendar API, same as the app's own scheduling flow
+// (classController.createClass, Phase 19). Pass --link to use an existing
+// link instead (e.g. Zoom, or a link created outside this system) — doing
+// so skips the Calendar API call entirely, so there's no Calendar event
+// backing it for a later reschedule/cancel to patch or delete.
 import mongoose from "mongoose";
 import { connectDB } from "../src/config/db.js";
 import User from "../src/models/User.js";
 import Class from "../src/models/Class.js";
 import { normalizePhone } from "../src/utils/validation.js";
+import { createMeetEvent } from "../src/services/googleCalendarService.js";
 
 function parseArgs(argv) {
   const args = {};
@@ -78,6 +86,23 @@ async function main() {
   }
 
   const batchType = args.batch === "group" || students.length > 1 ? "group" : "1-on-1";
+  const durationMinutes = args.duration ? Number(args.duration) : 45;
+
+  let meetingLink = args.link || "";
+  let googleCalendarEventId = null;
+  if (!args.link) {
+    try {
+      const meetEvent = await createMeetEvent({ subject: args.subject, scheduledAt, durationMinutes });
+      meetingLink = meetEvent.meetingLink;
+      googleCalendarEventId = meetEvent.eventId;
+    } catch (err) {
+      console.error("Could not create a Google Meet link:", err);
+      console.error("Pass --link to supply one manually instead. Nothing was scheduled.");
+      process.exitCode = 1;
+      await mongoose.disconnect();
+      return;
+    }
+  }
 
   const cls = await Class.create({
     subject: args.subject,
@@ -85,12 +110,13 @@ async function main() {
     students: students.map((s) => s._id),
     batchType,
     scheduledAt,
-    durationMinutes: args.duration ? Number(args.duration) : 45,
-    meetingLink: args.link || "",
+    durationMinutes,
+    meetingLink,
+    googleCalendarEventId,
   });
 
   console.log(
-    `Scheduled "${cls.subject}" (${batchType}) with ${tutor.name} for ${students.map((s) => s.name).join(", ")} at ${scheduledAt.toISOString()} — id ${cls._id}`
+    `Scheduled "${cls.subject}" (${batchType}) with ${tutor.name} for ${students.map((s) => s.name).join(", ")} at ${scheduledAt.toISOString()} — id ${cls._id}${meetingLink ? `, link: ${meetingLink}` : ""}`
   );
 
   await mongoose.disconnect();

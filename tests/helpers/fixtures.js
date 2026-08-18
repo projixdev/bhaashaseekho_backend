@@ -53,7 +53,16 @@ export async function createEnrollment({ student, tutor, courseSlug = "kannada",
 // into the post-endClass state (status "completed" + attendance recorded)
 // without going through the real endpoint, for tests whose focus is
 // downstream of that (e.g. feedback eligibility), not End Class itself.
-export async function createClass({ tutor, students, scheduledAt, status = "upcoming", subject = "Kannada", attendance }) {
+export async function createClass({
+  tutor,
+  students,
+  scheduledAt,
+  status = "upcoming",
+  subject = "Kannada",
+  attendance,
+  meetingLink,
+  googleCalendarEventId,
+}) {
   return Class.create({
     subject,
     tutor: tutor._id,
@@ -61,6 +70,8 @@ export async function createClass({ tutor, students, scheduledAt, status = "upco
     scheduledAt,
     status: attendance ? "completed" : status,
     attendance: attendance?.map((a) => ({ student: a.studentId, status: a.status })),
+    meetingLink,
+    googleCalendarEventId,
   });
 }
 

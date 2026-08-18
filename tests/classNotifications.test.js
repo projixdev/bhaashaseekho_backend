@@ -12,16 +12,25 @@ jest.unstable_mockModule("../src/services/brevoService.js", () => ({
   sendTransactionalEmail: jest.fn().mockResolvedValue({}),
 }));
 
+jest.unstable_mockModule("../src/services/googleCalendarService.js", () => ({
+  createMeetEvent: jest.fn(),
+  updateMeetEventTime: jest.fn().mockResolvedValue(undefined),
+  deleteMeetEvent: jest.fn().mockResolvedValue(undefined),
+}));
+
 const { default: app } = await import("../src/app.js");
 const { default: Class } = await import("../src/models/Class.js");
 const { resolveClassRecipients } = await import("../src/services/notificationScope.js");
 const { runClassReminderTick } = await import("../src/jobs/classReminders.js");
 const { sendTransactionalEmail } = await import("../src/services/brevoService.js");
+const { updateMeetEventTime, deleteMeetEvent } = await import("../src/services/googleCalendarService.js");
 
 beforeAll(connectTestDB);
 afterEach(() => {
   jest.restoreAllMocks();
   sendTransactionalEmail.mockClear();
+  updateMeetEventTime.mockClear().mockResolvedValue(undefined);
+  deleteMeetEvent.mockClear().mockResolvedValue(undefined);
   return clearTestDB();
 });
 afterAll(disconnectTestDB);
@@ -285,5 +294,126 @@ describe("PATCH /api/classes/:id/status — immediate cancel/postpone notificati
     const res = await updateStatus(teacher, cls._id, { status: "cancelled" });
     expect(res.status).toBe(409);
     expect((await Class.findById(cls._id)).status).toBe("completed");
+  });
+});
+
+describe("PATCH /api/classes/:id/status — Google Calendar sync (Phase 19)", () => {
+  function updateStatus(teacher, classId, body) {
+    return request(app)
+      .patch(`/api/classes/${classId}/status`)
+      .set("Authorization", `Bearer ${signToken(teacher)}`)
+      .send(body);
+  }
+
+  test("cancel → the Calendar event is deleted, meetingLink/eventId cleared on the class", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createEnrollment({ student, tutor: teacher });
+    const cls = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date(Date.now() + 3600 * 1000),
+      meetingLink: "https://meet.google.com/abc-defg-hij",
+      googleCalendarEventId: "cal-event-1",
+    });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+
+    const res = await updateStatus(teacher, cls._id, { status: "cancelled" });
+
+    expect(res.status).toBe(200);
+    expect(deleteMeetEvent).toHaveBeenCalledWith("cal-event-1");
+    expect(res.body.class.meetingLink).toBe("");
+    expect(res.body.class.googleCalendarEventId).toBeNull();
+
+    const stored = await Class.findById(cls._id);
+    expect(stored.meetingLink).toBe("");
+    expect(stored.googleCalendarEventId).toBeNull();
+  });
+
+  test("cancel, Calendar deletion fails → 502, status/link untouched", async () => {
+    deleteMeetEvent.mockRejectedValue(new Error("Google API unreachable"));
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createEnrollment({ student, tutor: teacher });
+    const cls = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date(Date.now() + 3600 * 1000),
+      meetingLink: "https://meet.google.com/abc-defg-hij",
+      googleCalendarEventId: "cal-event-1",
+    });
+
+    const res = await updateStatus(teacher, cls._id, { status: "cancelled" });
+
+    expect(res.status).toBe(502);
+    const stored = await Class.findById(cls._id);
+    expect(stored.status).toBe("upcoming");
+    expect(stored.meetingLink).toBe("https://meet.google.com/abc-defg-hij");
+    expect(stored.googleCalendarEventId).toBe("cal-event-1");
+  });
+
+  test("postpone with a new scheduledAt → the Calendar event's time is patched, meetingLink/eventId unchanged", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createEnrollment({ student, tutor: teacher });
+    const cls = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date(Date.now() + 3600 * 1000),
+      meetingLink: "https://meet.google.com/abc-defg-hij",
+      googleCalendarEventId: "cal-event-1",
+    });
+    const newTime = new Date(Date.now() + 3 * 24 * 3600 * 1000);
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+
+    const res = await updateStatus(teacher, cls._id, { status: "postponed", scheduledAt: newTime.toISOString() });
+
+    expect(res.status).toBe(200);
+    expect(updateMeetEventTime).toHaveBeenCalledWith("cal-event-1", {
+      scheduledAt: newTime,
+      durationMinutes: cls.durationMinutes,
+    });
+    expect(deleteMeetEvent).not.toHaveBeenCalled();
+    expect(res.body.class.meetingLink).toBe("https://meet.google.com/abc-defg-hij");
+    expect(res.body.class.googleCalendarEventId).toBe("cal-event-1");
+  });
+
+  test("postpone without a new scheduledAt → no Calendar API call at all", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createEnrollment({ student, tutor: teacher });
+    const cls = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date(Date.now() + 3600 * 1000),
+      meetingLink: "https://meet.google.com/abc-defg-hij",
+      googleCalendarEventId: "cal-event-1",
+    });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+
+    const res = await updateStatus(teacher, cls._id, { status: "postponed" });
+
+    expect(res.status).toBe(200);
+    expect(updateMeetEventTime).not.toHaveBeenCalled();
+    expect(deleteMeetEvent).not.toHaveBeenCalled();
+  });
+
+  test("a class with no Calendar event (manually-linked via the CLI's --link) → cancel succeeds with no Calendar API call", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createEnrollment({ student, tutor: teacher });
+    const cls = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date(Date.now() + 3600 * 1000),
+      meetingLink: "https://zoom.us/j/manual-link",
+      googleCalendarEventId: null,
+    });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+
+    const res = await updateStatus(teacher, cls._id, { status: "cancelled" });
+
+    expect(res.status).toBe(200);
+    expect(deleteMeetEvent).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import Class from "../models/Class.js";
 import Enrollment from "../models/Enrollment.js";
 import User from "../models/User.js";
 import { notifyClassStatusChange } from "../services/classNotifications.js";
+import { createMeetEvent, updateMeetEventTime, deleteMeetEvent } from "../services/googleCalendarService.js";
 
 // Students see classes they're enrolled in; teachers see classes they teach.
 // Same endpoint, filter depends on req.user.role from the verified JWT.
@@ -42,10 +43,10 @@ export async function listUpcomingClasses(req, res) {
 
 // App-flow counterpart to scripts/scheduleClass.js, now that a teacher can
 // do this themselves instead of asking an admin to run the CLI script.
-// Mirrors the script's exact creation logic/defaults (durationMinutes 45,
-// meetingLink left empty — Zoom integration is on hold) — the only real
-// difference is the ownership check, which the CLI script skips since
-// whoever runs it is trusted, but an HTTP endpoint can't assume that.
+// Mirrors the script's exact creation logic/defaults (durationMinutes 45) —
+// the only real differences are the ownership check, which the CLI script
+// skips since whoever runs it is trusted, and that a Meet link is always
+// auto-generated here rather than optionally passed in.
 export async function createClass(req, res) {
   try {
     const { studentId, subject, scheduledAt, durationMinutes } = req.body;
@@ -71,14 +72,36 @@ export async function createClass(req, res) {
       return;
     }
 
+    const resolvedDuration = durationMinutes ? Number(durationMinutes) : 45;
+
+    // Meet link generated before the class doc is ever written — a failure
+    // here must not leave a class saved with an empty meetingLink (Phase 19
+    // Part 1.3); the teacher gets a clear error and can just retry Save.
+    let meetingLink;
+    let googleCalendarEventId;
+    try {
+      const meetEvent = await createMeetEvent({
+        subject: subject.trim(),
+        scheduledAt: parsedScheduledAt,
+        durationMinutes: resolvedDuration,
+      });
+      meetingLink = meetEvent.meetingLink;
+      googleCalendarEventId = meetEvent.eventId;
+    } catch (err) {
+      console.error("Google Calendar event creation failed for a new class:", err);
+      res.status(502).json({ success: false, message: "Could not create the meeting link. Please try again." });
+      return;
+    }
+
     const cls = await Class.create({
       subject: subject.trim(),
       tutor: req.user.id,
       students: [studentId],
       batchType: "1-on-1",
       scheduledAt: parsedScheduledAt,
-      durationMinutes: durationMinutes ? Number(durationMinutes) : 45,
-      meetingLink: "",
+      durationMinutes: resolvedDuration,
+      meetingLink,
+      googleCalendarEventId,
     });
 
     res.json({ success: true, class: cls });
@@ -204,8 +227,37 @@ export async function updateClassStatus(req, res) {
       }
     }
 
+    // Keeps the Google Calendar event (if this class has one — a manually
+    // --link'd class from scripts/scheduleClass.js may not) from going
+    // stale: deleted on cancel, time-patched on a postpone that includes a
+    // new scheduledAt. Postponing without a new time yet touches nothing
+    // calendar-side, since nothing actually changed. Attempted before the
+    // DB write so the calendar and the stored status can't disagree — a
+    // failure here is reported back rather than silently cancelling in the
+    // app while the meeting still shows live on the calendar.
+    if (classDoc.googleCalendarEventId) {
+      try {
+        if (status === "cancelled") {
+          await deleteMeetEvent(classDoc.googleCalendarEventId);
+        } else if (status === "postponed" && parsedScheduledAt) {
+          await updateMeetEventTime(classDoc.googleCalendarEventId, {
+            scheduledAt: parsedScheduledAt,
+            durationMinutes: classDoc.durationMinutes,
+          });
+        }
+      } catch (err) {
+        console.error(`Google Calendar sync failed for class ${classDoc._id} (${status}):`, err);
+        res.status(502).json({ success: false, message: "Could not update the meeting. Please try again." });
+        return;
+      }
+    }
+
     classDoc.status = status;
     if (parsedScheduledAt) classDoc.scheduledAt = parsedScheduledAt;
+    if (status === "cancelled") {
+      classDoc.meetingLink = "";
+      classDoc.googleCalendarEventId = null;
+    }
     await classDoc.save();
 
     await notifyClassStatusChange(classDoc, { newScheduledAt: parsedScheduledAt });
