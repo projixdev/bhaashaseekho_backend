@@ -9,11 +9,13 @@ import {
   getAdminTeacher,
   updateTeacher,
   deleteTeacher,
+  reactivateTeacher,
   listAdminStudents,
   createStudent,
   getAdminStudent,
   updateStudent,
   deleteStudent,
+  reactivateStudent,
   createEnrollment,
   reassignEnrollmentTutor,
   deleteEnrollment,
@@ -32,12 +34,14 @@ router.post("/teachers", requireAuth, requireAdmin, createTeacher);
 router.get("/teachers/:id", requireAuth, requireAdmin, getAdminTeacher);
 router.patch("/teachers/:id", requireAuth, requireAdmin, updateTeacher);
 router.delete("/teachers/:id", requireAuth, requireAdmin, deleteTeacher);
+router.patch("/teachers/:id/reactivate", requireAuth, requireAdmin, reactivateTeacher);
 
 router.get("/students", requireAuth, requireAdmin, listAdminStudents);
 router.post("/students", requireAuth, requireAdmin, createStudent);
 router.get("/students/:id", requireAuth, requireAdmin, getAdminStudent);
 router.patch("/students/:id", requireAuth, requireAdmin, updateStudent);
 router.delete("/students/:id", requireAuth, requireAdmin, deleteStudent);
+router.patch("/students/:id/reactivate", requireAuth, requireAdmin, reactivateStudent);
 router.post("/students/:id/enrollments", requireAuth, requireAdmin, createEnrollment);
 
 router.patch("/enrollments/:id", requireAuth, requireAdmin, reassignEnrollmentTutor);

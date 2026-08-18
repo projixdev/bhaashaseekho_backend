@@ -404,6 +404,29 @@ export async function deleteTeacher(req, res) {
   }
 }
 
+// The other half of deactivate — no blocking business rule here the way
+// deactivate has (active-enrollment check), since making someone selectable
+// again can't strand anything the way deactivating them could.
+export async function reactivateTeacher(req, res) {
+  try {
+    await connectDB();
+
+    const teacher = await User.findOne({ _id: req.params.id, role: "teacher" });
+    if (!teacher) {
+      res.status(404).json({ success: false, message: "Teacher not found." });
+      return;
+    }
+
+    teacher.isActive = true;
+    await teacher.save();
+
+    res.json({ success: true, teacher: { _id: teacher._id, name: teacher.name, isActive: true } });
+  } catch (err) {
+    console.error("PATCH /api/admin/teachers/:id/reactivate failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
 // A trial account gets exactly this long from the moment the admin creates
 // it (not from any class date — there's no trial-class-scheduling step in
 // this flow) before sendOtp/requireAuth start rejecting it.
@@ -782,6 +805,28 @@ export async function deleteStudent(req, res) {
     res.json({ success: true, student: { _id: student._id, name: student.name, isActive: false } });
   } catch (err) {
     console.error("DELETE /api/admin/students/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// The other half of deactivate — same reasoning as reactivateTeacher, no
+// blocking rule needed since re-enabling a student can't strand anything.
+export async function reactivateStudent(req, res) {
+  try {
+    await connectDB();
+
+    const student = await User.findOne({ _id: req.params.id, role: "student" });
+    if (!student) {
+      res.status(404).json({ success: false, message: "Student not found." });
+      return;
+    }
+
+    student.isActive = true;
+    await student.save();
+
+    res.json({ success: true, student: { _id: student._id, name: student.name, isActive: true } });
+  } catch (err) {
+    console.error("PATCH /api/admin/students/:id/reactivate failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }

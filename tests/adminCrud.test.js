@@ -242,6 +242,52 @@ describe("DELETE /api/admin/teachers/:id", () => {
   });
 });
 
+describe("PATCH /api/admin/teachers/:id/reactivate", () => {
+  function reactivateTeacher(id, token) {
+    return request(app).patch(`/api/admin/teachers/${id}/reactivate`).set("Authorization", `Bearer ${token}`);
+  }
+
+  test("deactivated teacher → 200, isActive: true again", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+    await User.findByIdAndUpdate(teacher._id, { isActive: false });
+
+    const res = await reactivateTeacher(teacher._id, token);
+    expect(res.status).toBe(200);
+    expect(res.body.teacher.isActive).toBe(true);
+    expect((await User.findById(teacher._id)).isActive).toBe(true);
+  });
+
+  test("already-active teacher → 200, no-op", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+
+    const res = await reactivateTeacher(teacher._id, token);
+    expect(res.status).toBe(200);
+    expect(res.body.teacher.isActive).toBe(true);
+  });
+
+  test("unknown id → 404", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const res = await reactivateTeacher(student._id, token); // wrong role
+    expect(res.status).toBe(404);
+  });
+
+  test("non-admin token → 403", async () => {
+    const teacher = await createTeacher();
+    await User.findByIdAndUpdate(teacher._id, { isActive: false });
+    const res = await reactivateTeacher(teacher._id, signToken(teacher));
+    expect(res.status).toBe(403);
+  });
+
+  test("no token → 401", async () => {
+    const teacher = await createTeacher();
+    const res = await request(app).patch(`/api/admin/teachers/${teacher._id}/reactivate`);
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("POST /api/admin/students", () => {
   function createStudentReq(body, token) {
     return request(app).post("/api/admin/students").set("Authorization", `Bearer ${token}`).send(body);
@@ -638,6 +684,52 @@ describe("DELETE /api/admin/students/:id", () => {
   test("no token → 401", async () => {
     const student = await createStudent();
     const res = await request(app).delete(`/api/admin/students/${student._id}`);
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("PATCH /api/admin/students/:id/reactivate", () => {
+  function reactivateStudent(id, token) {
+    return request(app).patch(`/api/admin/students/${id}/reactivate`).set("Authorization", `Bearer ${token}`);
+  }
+
+  test("deactivated student → 200, isActive: true again", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    await User.findByIdAndUpdate(student._id, { isActive: false });
+
+    const res = await reactivateStudent(student._id, token);
+    expect(res.status).toBe(200);
+    expect(res.body.student.isActive).toBe(true);
+    expect((await User.findById(student._id)).isActive).toBe(true);
+  });
+
+  test("already-active student → 200, no-op", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+
+    const res = await reactivateStudent(student._id, token);
+    expect(res.status).toBe(200);
+    expect(res.body.student.isActive).toBe(true);
+  });
+
+  test("unknown id → 404", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+    const res = await reactivateStudent(teacher._id, token); // wrong role
+    expect(res.status).toBe(404);
+  });
+
+  test("non-admin token → 403", async () => {
+    const student = await createStudent();
+    await User.findByIdAndUpdate(student._id, { isActive: false });
+    const res = await reactivateStudent(student._id, signToken(student));
+    expect(res.status).toBe(403);
+  });
+
+  test("no token → 401", async () => {
+    const student = await createStudent();
+    const res = await request(app).patch(`/api/admin/students/${student._id}/reactivate`);
     expect(res.status).toBe(401);
   });
 });
