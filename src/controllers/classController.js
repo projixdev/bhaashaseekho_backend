@@ -7,6 +7,14 @@ import { createMeetEvent, updateMeetEventTime, deleteMeetEvent } from "../servic
 
 // Students see classes they're enrolled in; teachers see classes they teach.
 // Same endpoint, filter depends on req.user.role from the verified JWT.
+//
+// ?from=&to= (both required together, ISO strings) switches this from the
+// default "upcoming/live" view to a plain date-range view of every status —
+// the teacher app's week calendar needs to show a Monday's already-completed
+// or cancelled class alongside Friday's still-upcoming one, which the
+// status-filtered default can't do (Phase 19 Part 3). Omitting both keeps
+// the original behavior exactly as before, so nothing else calling this
+// endpoint is affected.
 export async function listUpcomingClasses(req, res) {
   try {
     await connectDB();
@@ -14,7 +22,16 @@ export async function listUpcomingClasses(req, res) {
     const filter =
       req.user.role === "teacher" ? { tutor: req.user.id } : { students: req.user.id };
 
-    if (req.user.role === "teacher") {
+    const { from, to } = req.query;
+    if (from && to) {
+      const parsedFrom = new Date(from);
+      const parsedTo = new Date(to);
+      if (Number.isNaN(parsedFrom.getTime()) || Number.isNaN(parsedTo.getTime())) {
+        res.status(400).json({ success: false, message: "Invalid from/to date." });
+        return;
+      }
+      filter.scheduledAt = { $gte: parsedFrom, $lt: parsedTo };
+    } else if (req.user.role === "teacher") {
       // Teachers also need to see a class whose scheduled time has already
       // passed but hasn't been ended yet (ROADMAP.md Phase 13) — that's
       // exactly the class endClass exists to act on, so it can't be

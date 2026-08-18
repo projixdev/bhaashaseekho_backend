@@ -48,6 +48,79 @@ describe("GET /api/classes scoping", () => {
   });
 });
 
+describe("GET /api/classes?from=&to= — date-range view for the app's week calendar (Phase 19 Part 3)", () => {
+  test("returns classes of every status inside the range, unlike the default upcoming/live-only view", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    const rangeStart = new Date("2026-09-07T00:00:00.000Z"); // a Monday
+    const rangeEnd = new Date("2026-09-14T00:00:00.000Z"); // the following Monday
+
+    const completedInRange = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date("2026-09-08T12:00:00.000Z"),
+      attendance: [{ studentId: student._id.toString(), status: "present" }],
+    });
+    const cancelledInRange = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date("2026-09-10T12:00:00.000Z"),
+      status: "cancelled",
+    });
+    const upcomingInRange = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date("2026-09-12T12:00:00.000Z"),
+    });
+    await createClass({ tutor: teacher, students: [student], scheduledAt: new Date("2026-09-20T12:00:00.000Z") }); // outside the range
+
+    const res = await request(app)
+      .get(`/api/classes?from=${rangeStart.toISOString()}&to=${rangeEnd.toISOString()}`)
+      .set("Authorization", `Bearer ${signToken(teacher)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.classes.map((c) => c._id).sort()).toEqual(
+      [completedInRange._id.toString(), cancelledInRange._id.toString(), upcomingInRange._id.toString()].sort()
+    );
+  });
+
+  test("scoping still applies — a date-ranged request never returns another teacher's class", async () => {
+    const teacherA = await createTeacher();
+    const teacherB = await createTeacher();
+    const student = await createStudent();
+    const rangeStart = new Date("2026-09-07T00:00:00.000Z");
+    const rangeEnd = new Date("2026-09-14T00:00:00.000Z");
+    await createClass({ tutor: teacherB, students: [student], scheduledAt: new Date("2026-09-08T12:00:00.000Z") });
+
+    const res = await request(app)
+      .get(`/api/classes?from=${rangeStart.toISOString()}&to=${rangeEnd.toISOString()}`)
+      .set("Authorization", `Bearer ${signToken(teacherA)}`);
+
+    expect(res.body.classes).toEqual([]);
+  });
+
+  test("invalid from/to → 400", async () => {
+    const teacher = await createTeacher();
+    const res = await request(app)
+      .get("/api/classes?from=not-a-date&to=also-not-a-date")
+      .set("Authorization", `Bearer ${signToken(teacher)}`);
+    expect(res.status).toBe(400);
+  });
+
+  test("only one of from/to given → falls back to the default upcoming/live view, not an error", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    const cls = await createClass({ tutor: teacher, students: [student], scheduledAt: inOneDay() });
+
+    const res = await request(app)
+      .get(`/api/classes?from=${new Date().toISOString()}`)
+      .set("Authorization", `Bearer ${signToken(teacher)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.classes.map((c) => c._id)).toEqual([cls._id.toString()]);
+  });
+});
+
 describe("GET /api/assignments scoping", () => {
   test("teacher sees only assignments they created; student sees only their own homework", async () => {
     const teacherA = await createTeacher();
