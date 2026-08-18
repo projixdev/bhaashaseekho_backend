@@ -36,12 +36,19 @@ function toEventTimes(scheduledAt, durationMinutes) {
   };
 }
 
-// No attendees on the event on purpose — Enrollment-based scoping already
-// controls who sees this class in-app; we're not layering Google's own
-// calendar-invite access control on top of that (Phase 19 brief, Part 1.2).
+// Attendees ARE added now — reversed from the original "don't add them,
+// Enrollment scoping already controls who sees the class in-app" brief.
+// In practice, an attendee-less event means Google Meet treats literally
+// everyone as an uninvited guest who has to knock and be admitted by the
+// organizer — and the organizer here is GOOGLE_WORKSPACE_USER_EMAIL, an
+// identity nobody actually sits in and monitors, so nobody could ever get
+// admitted. Adding the real tutor/student here doesn't change who the app
+// shows the class to (Enrollment scoping still owns that entirely); it only
+// lets Meet recognize them as already-invited so they skip the knock —
+// which requires them to actually be signed into Meet as that exact email.
 // Throws on any failure — callers must not save a class with an empty
 // meetingLink, so there's nothing to catch-and-default here.
-export async function createMeetEvent({ subject, scheduledAt, durationMinutes }) {
+export async function createMeetEvent({ subject, scheduledAt, durationMinutes, attendeeEmails = [] }) {
   const calendar = getCalendarClient();
 
   const response = await calendar.events.insert({
@@ -50,6 +57,7 @@ export async function createMeetEvent({ subject, scheduledAt, durationMinutes })
     requestBody: {
       summary: subject,
       ...toEventTimes(scheduledAt, durationMinutes),
+      attendees: attendeeEmails.map((email) => ({ email })),
       conferenceData: {
         createRequest: {
           requestId: randomUUID(),

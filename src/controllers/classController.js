@@ -91,6 +91,19 @@ export async function createClass(req, res) {
 
     const resolvedDuration = durationMinutes ? Number(durationMinutes) : 45;
 
+    // Real emails so Meet recognizes the tutor/student as already-invited
+    // and skips the "ask to join" knock — otherwise, since the event's
+    // organizer is GOOGLE_WORKSPACE_USER_EMAIL (an identity nobody actually
+    // sits in), nobody could ever be admitted. Only matters when they're
+    // actually signed into Meet as that exact address; email is optional on
+    // a teacher account (Phase 17), so this degrades to "that person still
+    // has to knock" rather than failing the whole request if it's missing.
+    const [tutor, student] = await Promise.all([
+      User.findById(req.user.id).select("email").lean(),
+      User.findById(studentId).select("email").lean(),
+    ]);
+    const attendeeEmails = [tutor?.email, student?.email].filter(Boolean);
+
     // Meet link generated before the class doc is ever written — a failure
     // here must not leave a class saved with an empty meetingLink (Phase 19
     // Part 1.3); the teacher gets a clear error and can just retry Save.
@@ -101,6 +114,7 @@ export async function createClass(req, res) {
         subject: subject.trim(),
         scheduledAt: parsedScheduledAt,
         durationMinutes: resolvedDuration,
+        attendeeEmails,
       });
       meetingLink = meetEvent.meetingLink;
       googleCalendarEventId = meetEvent.eventId;

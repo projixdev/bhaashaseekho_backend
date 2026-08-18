@@ -91,8 +91,13 @@ async function main() {
   let meetingLink = args.link || "";
   let googleCalendarEventId = null;
   if (!args.link) {
+    // Real emails so Meet recognizes them as already-invited and skips the
+    // "ask to join" knock — see googleCalendarService.js's own comment on
+    // createMeetEvent for why this matters (the event's organizer is a
+    // Workspace identity nobody actually monitors).
+    const attendeeEmails = [tutor.email, ...students.map((s) => s.email)].filter(Boolean);
     try {
-      const meetEvent = await createMeetEvent({ subject: args.subject, scheduledAt, durationMinutes });
+      const meetEvent = await createMeetEvent({ subject: args.subject, scheduledAt, durationMinutes, attendeeEmails });
       meetingLink = meetEvent.meetingLink;
       googleCalendarEventId = meetEvent.eventId;
     } catch (err) {

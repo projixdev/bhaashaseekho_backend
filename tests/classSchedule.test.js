@@ -50,11 +50,30 @@ test("teacher schedules a class for their own assigned student → 200, matches 
     subject: "Hindi Conversation",
     scheduledAt: new Date(VALID_BODY.scheduledAt),
     durationMinutes: 45,
+    attendeeEmails: [teacher.email, student.email],
   });
 
   const stored = await Class.findById(res.body.class._id);
   expect(stored.meetingLink).toBe("https://meet.google.com/abc-defg-hij");
   expect(stored.googleCalendarEventId).toBe("cal-event-1");
+});
+
+test("a teacher with no email on file → attendeeEmails only includes the student, doesn't error", async () => {
+  createMeetEvent.mockResolvedValue({ meetingLink: "https://meet.google.com/abc-defg-hij", eventId: "cal-event-1" });
+
+  const teacher = await createTeacher({ email: null });
+  const student = await createStudent();
+  await createEnrollment({ student, tutor: teacher });
+
+  const res = await request(app)
+    .post("/api/classes")
+    .set("Authorization", `Bearer ${signToken(teacher)}`)
+    .send({ ...VALID_BODY, studentId: student._id.toString() });
+
+  expect(res.status).toBe(200);
+  expect(createMeetEvent).toHaveBeenCalledWith(
+    expect.objectContaining({ attendeeEmails: [student.email] })
+  );
 });
 
 test("Google Calendar API failure → 502, clear error, no class document created", async () => {
