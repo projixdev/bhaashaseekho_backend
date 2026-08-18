@@ -70,4 +70,14 @@ export const env = {
   get googleCalendarId() {
     return required("GOOGLE_CALENDAR_ID");
   },
+  // The real Google Workspace user the service account impersonates via
+  // domain-wide delegation — required specifically for Meet conference
+  // creation (calendar.events.insert/patch/delete work fine as the bare
+  // service account identity; Google rejects hangoutsMeet conferenceData
+  // from an unimpersonated service account with "Invalid conference type
+  // value" regardless of calendar-sharing permissions). Must be a real user
+  // in the same Workspace as the delegation grant, not just any address.
+  get googleWorkspaceUserEmail() {
+    return required("GOOGLE_WORKSPACE_USER_EMAIL");
+  },
 };

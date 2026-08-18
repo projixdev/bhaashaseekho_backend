@@ -7,11 +7,22 @@ import { env } from "../config/env.js";
 // account's own calendar (GOOGLE_CALENDAR_ID) is what events get created
 // on; share that calendar with the service account's email first (see
 // README/setup notes) or every call below fails with a 404.
+//
+// `subject` makes this a domain-wide-delegated request impersonating a real
+// Workspace user, rather than the bare service-account identity — required
+// specifically for Meet conference creation. Plain event insert/patch/
+// delete work without it, but Google rejects conferenceData.createRequest
+// with "Invalid conference type value" from an unimpersonated service
+// account, no matter what calendar-sharing permissions are granted. The
+// Workspace admin also has to explicitly authorize this service account for
+// domain-wide delegation (Admin Console -> Security -> API controls ->
+// Domain-wide delegation) before impersonation itself is accepted.
 function getCalendarClient() {
   const auth = new google.auth.JWT({
     email: env.googleServiceAccountEmail,
     key: env.googleServiceAccountPrivateKey,
     scopes: ["https://www.googleapis.com/auth/calendar"],
+    subject: env.googleWorkspaceUserEmail,
   });
   return google.calendar({ version: "v3", auth });
 }
