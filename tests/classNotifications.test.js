@@ -98,7 +98,7 @@ describe("runClassReminderTick — time-based 60/30 min reminders", () => {
     const now = new Date();
     const cls = await createClass({ tutor: teacher, students: [student], scheduledAt: new Date(now.getTime() + 60 * 60 * 1000) });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const result = await runClassReminderTick(now);
 
@@ -122,7 +122,7 @@ describe("runClassReminderTick — time-based 60/30 min reminders", () => {
     // 10 minutes outside the 60min window's ±2min tolerance.
     const cls = await createClass({ tutor: teacher, students: [student], scheduledAt: new Date(now.getTime() + 70 * 60 * 1000) });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
     const result = await runClassReminderTick(now);
 
     expect(result.sent).toBe(0);
@@ -140,7 +140,7 @@ describe("runClassReminderTick — time-based 60/30 min reminders", () => {
     const cls = await createClass({ tutor: teacher, students: [student], scheduledAt: new Date(now.getTime() + 60 * 60 * 1000) });
     await Class.findByIdAndUpdate(cls._id, { notificationsSent: ["60min"] });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
     const result = await runClassReminderTick(now);
 
     expect(result.sent).toBe(0);
@@ -156,7 +156,7 @@ describe("runClassReminderTick — time-based 60/30 min reminders", () => {
     const now = new Date();
     await createClass({ tutor: teacher, students: [student], scheduledAt: new Date(now.getTime() + 30 * 60 * 1000) });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const [a, b] = await Promise.all([runClassReminderTick(now), runClassReminderTick(now)]);
 
@@ -178,7 +178,7 @@ describe("runClassReminderTick — time-based 60/30 min reminders", () => {
       status: "cancelled",
     });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
     const result = await runClassReminderTick(now);
 
     expect(result.sent).toBe(0);
@@ -207,7 +207,7 @@ describe("PATCH /api/classes/:id/status — immediate cancel/postpone notificati
 
     const cls = await createClass({ tutor: teacher1, students: [stu1], scheduledAt: new Date(Date.now() + 3600 * 1000) });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await updateStatus(teacher1, cls._id, { status: "cancelled" });
 
@@ -233,7 +233,7 @@ describe("PATCH /api/classes/:id/status — immediate cancel/postpone notificati
 
     const cls = await createClass({ tutor: teacher1, students: [stu1], scheduledAt: new Date(Date.now() + 3600 * 1000) });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     await updateStatus(teacher1, cls._id, { status: "cancelled" });
 
@@ -253,7 +253,7 @@ describe("PATCH /api/classes/:id/status — immediate cancel/postpone notificati
     const cls = await createClass({ tutor: teacher, students: [student], scheduledAt: new Date(Date.now() + 3600 * 1000) });
     const newTime = new Date(Date.now() + 3 * 24 * 3600 * 1000);
 
-    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await updateStatus(teacher, cls._id, { status: "postponed", scheduledAt: newTime.toISOString() });
 
@@ -271,7 +271,7 @@ describe("PATCH /api/classes/:id/status — immediate cancel/postpone notificati
     await createEnrollment({ student, tutor: teacher });
 
     const cls = await createClass({ tutor: teacher, students: [student], scheduledAt: new Date(Date.now() + 3600 * 1000) });
-    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await updateStatus(teacher, cls._id, { status: "postponed" });
 
@@ -287,7 +287,7 @@ describe("PATCH /api/classes/:id/status — immediate cancel/postpone notificati
     await createEnrollment({ student, tutor: owner });
     const cls = await createClass({ tutor: owner, students: [student], scheduledAt: new Date(Date.now() + 3600 * 1000) });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
     const res = await updateStatus(other, cls._id, { status: "cancelled" });
 
     expect(res.status).toBe(403);
@@ -338,7 +338,7 @@ describe("PATCH /api/classes/:id/status — Google Calendar sync (Phase 19)", ()
       meetingLink: "https://meet.google.com/abc-defg-hij",
       googleCalendarEventId: "cal-event-1",
     });
-    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await updateStatus(teacher, cls._id, { status: "cancelled" });
 
@@ -386,7 +386,7 @@ describe("PATCH /api/classes/:id/status — Google Calendar sync (Phase 19)", ()
       googleCalendarEventId: "cal-event-1",
     });
     const newTime = new Date(Date.now() + 3 * 24 * 3600 * 1000);
-    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await updateStatus(teacher, cls._id, { status: "postponed", scheduledAt: newTime.toISOString() });
 
@@ -411,7 +411,7 @@ describe("PATCH /api/classes/:id/status — Google Calendar sync (Phase 19)", ()
       meetingLink: "https://meet.google.com/abc-defg-hij",
       googleCalendarEventId: "cal-event-1",
     });
-    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await updateStatus(teacher, cls._id, { status: "postponed" });
 
@@ -431,7 +431,7 @@ describe("PATCH /api/classes/:id/status — Google Calendar sync (Phase 19)", ()
       meetingLink: "https://zoom.us/j/manual-link",
       googleCalendarEventId: null,
     });
-    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await updateStatus(teacher, cls._id, { status: "cancelled" });
 

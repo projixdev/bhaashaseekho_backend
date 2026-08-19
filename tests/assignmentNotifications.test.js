@@ -60,7 +60,7 @@ describe("POST /api/assignments — homework/assessment assigned", () => {
     await withPushToken(teacher, "tutor-token");
     await withPushToken(student, "student-token");
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await request(app)
       .post("/api/assignments")
@@ -84,7 +84,7 @@ describe("POST /api/assignments — homework/assessment assigned", () => {
     const student = await createStudent();
     await createEnrollment({ student, tutor: otherTeacher });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await request(app)
       .post("/api/assignments")
@@ -108,7 +108,7 @@ describe("POST /api/assignments/:id/submit — uploaded by student", () => {
     await withPushToken(teacher, "tutor-token");
     await withPushToken(student, "student-token");
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await request(app)
       .post(`/api/assignments/${assignment._id}/submit`)
@@ -133,7 +133,7 @@ describe("PATCH /api/assignments/:id/review — reviewed/scored", () => {
     const assignment = await createAssignmentDoc({ student, tutor: teacher, title: "Homework 1" });
     await withPushToken(student, "student-token");
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const res = await request(app)
       .patch(`/api/assignments/${assignment._id}/review`)

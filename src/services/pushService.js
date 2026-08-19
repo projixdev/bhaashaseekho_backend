@@ -47,7 +47,26 @@ export async function sendPushNotifications(tokens, { title, body, data } = {}) 
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`Expo push API error ${response.status}: ${errorText}`);
+        continue;
       }
+
+      // A 200 OK here only means Expo accepted the batch for delivery — it
+      // says nothing about whether any individual message actually reached
+      // a device. Each one gets its own ticket in data[], and a per-ticket
+      // "error" (DeviceNotRegistered, InvalidCredentials, MessageTooBig...)
+      // was previously swallowed completely: the outer response.ok check
+      // above is the only thing that was ever inspected, so a token that
+      // silently failed to deliver looked identical to one that succeeded.
+      const { data: tickets } = await response.json();
+      (tickets ?? []).forEach((ticket, i) => {
+        if (ticket.status === "error") {
+          console.error(
+            `Expo push ticket error for ${batch[i]}: ${ticket.message}${
+              ticket.details?.error ? ` (${ticket.details.error})` : ""
+            }`
+          );
+        }
+      });
     } catch (err) {
       console.error("Expo push batch failed:", err);
     }

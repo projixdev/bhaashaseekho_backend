@@ -222,7 +222,7 @@ describe("POST /api/messages/conversations/:otherUserId", () => {
     await createEnrollment({ student, tutor: teacher });
     await User.findByIdAndUpdate(student._id, { pushToken: "stu-token", notificationsEnabled: false });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     await request(app)
       .post(`/api/messages/conversations/${student._id}`)

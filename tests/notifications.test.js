@@ -83,7 +83,7 @@ describe("PATCH /api/notifications/preferences", () => {
 
 describe("sendPushNotifications (Expo push API caller)", () => {
   test("sends one request for a small batch, with the right payload shape", async () => {
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     await sendPushNotifications(["token-a", "token-b"], { title: "Hi", body: "There" });
 
@@ -98,7 +98,7 @@ describe("sendPushNotifications (Expo push API caller)", () => {
   });
 
   test("splits more than 100 tokens into multiple batched requests", async () => {
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
     const tokens = Array.from({ length: 150 }, (_, i) => `token-${i}`);
 
     await sendPushNotifications(tokens, { title: "Hi", body: "There" });
@@ -115,6 +115,31 @@ describe("sendPushNotifications (Expo push API caller)", () => {
     await expect(sendPushNotifications(["token-a"], { title: "Hi", body: "There" })).resolves.toBeUndefined();
     expect(errorSpy).toHaveBeenCalled();
   });
+
+  // A 200 OK from Expo only means the batch was accepted — an individual
+  // token can still fail (stale/uninstalled app -> DeviceNotRegistered,
+  // say), reported as its own "error" ticket inside the response body
+  // rather than as an HTTP-level failure. Previously nothing ever looked
+  // at that body on the success path, so a silently-failing token was
+  // indistinguishable from a delivered one.
+  test("a per-ticket error inside a 200 OK response is logged too, not just an HTTP-level failure", async () => {
+    jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      text: async () => "",
+      json: async () => ({
+        data: [
+          { status: "ok", id: "receipt-a" },
+          { status: "error", message: "\"ExponentPushToken[bad]\" is not registered", details: { error: "DeviceNotRegistered" } },
+        ],
+      }),
+    });
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    await sendPushNotifications(["token-good", "token-bad"], { title: "Hi", body: "There" });
+
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("token-bad"));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("DeviceNotRegistered"));
+  });
 });
 
 describe("runMonthlyReloginReminder", () => {
@@ -125,7 +150,7 @@ describe("runMonthlyReloginReminder", () => {
     const teacherWithToken = await createTeacher({ name: "Teacher Has Token" });
     await User.findByIdAndUpdate(teacherWithToken._id, { pushToken: "token-2" });
 
-    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
 
     const result = await runMonthlyReloginReminder();
 
