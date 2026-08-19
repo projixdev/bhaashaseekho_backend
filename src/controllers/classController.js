@@ -51,7 +51,16 @@ export async function listUpcomingClasses(req, res) {
       .populate("students", "name phone")
       .lean();
 
-    res.json({ success: true, classes });
+    const response = { success: true, classes };
+
+    // Teacher-only stat for the app's Profile screen — piggybacks on this
+    // endpoint (already the one the teacher's Home/Classes screens call)
+    // rather than a whole new route just for one number.
+    if (req.user.role === "teacher") {
+      response.completedCount = await Class.countDocuments({ tutor: req.user.id, status: "completed" });
+    }
+
+    res.json(response);
   } catch (err) {
     console.error("GET /api/classes failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });

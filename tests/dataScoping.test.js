@@ -46,6 +46,22 @@ describe("GET /api/classes scoping", () => {
     const asTeacherB = await request(app).get("/api/classes").set("Authorization", `Bearer ${signToken(teacherB)}`);
     expect(asTeacherB.body.classes.map((c) => c._id)).toEqual([classB._id.toString()]);
   });
+
+  test("teacher response includes completedCount (classes they taught, scoped to them); student response has no such field", async () => {
+    const teacherA = await createTeacher();
+    const teacherB = await createTeacher();
+    const student = await createStudent();
+    await createClass({ tutor: teacherA, students: [student], scheduledAt: new Date(), status: "completed" });
+    await createClass({ tutor: teacherA, students: [student], scheduledAt: new Date(), status: "completed" });
+    await createClass({ tutor: teacherA, students: [student], scheduledAt: inOneDay() }); // upcoming, not counted
+    await createClass({ tutor: teacherB, students: [student], scheduledAt: new Date(), status: "completed" }); // another teacher's, not counted
+
+    const asTeacherA = await request(app).get("/api/classes").set("Authorization", `Bearer ${signToken(teacherA)}`);
+    expect(asTeacherA.body.completedCount).toBe(2);
+
+    const asStudent = await request(app).get("/api/classes").set("Authorization", `Bearer ${signToken(student)}`);
+    expect(asStudent.body.completedCount).toBeUndefined();
+  });
 });
 
 describe("GET /api/classes?from=&to= — date-range view for the app's week calendar (Phase 19 Part 3)", () => {
