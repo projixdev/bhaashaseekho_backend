@@ -8,6 +8,7 @@ import rosterRoutes from "./rosterRoutes.js";
 import feedbackRoutes from "./feedbackRoutes.js";
 import adminRoutes from "./adminRoutes.js";
 import notificationRoutes from "./notificationRoutes.js";
+import messagesRoutes from "./messagesRoutes.js";
 
 const router = Router();
 
@@ -20,5 +21,6 @@ router.use("/roster", rosterRoutes);
 router.use("/feedback", feedbackRoutes);
 router.use("/admin", adminRoutes);
 router.use("/notifications", notificationRoutes);
+router.use("/messages", messagesRoutes);
 
 export default router;
