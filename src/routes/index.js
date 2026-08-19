@@ -9,6 +9,8 @@ import feedbackRoutes from "./feedbackRoutes.js";
 import adminRoutes from "./adminRoutes.js";
 import notificationRoutes from "./notificationRoutes.js";
 import messagesRoutes from "./messagesRoutes.js";
+import enrollmentRoutes from "./enrollmentRoutes.js";
+import supportRoutes from "./supportRoutes.js";
 
 const router = Router();
 
@@ -22,5 +24,7 @@ router.use("/feedback", feedbackRoutes);
 router.use("/admin", adminRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/messages", messagesRoutes);
+router.use("/enrollment", enrollmentRoutes);
+router.use("/support", supportRoutes);
 
 export default router;

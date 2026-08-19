@@ -13,6 +13,7 @@ process.env.CORS_ORIGIN = "*";
 process.env.PORT = "0";
 process.env.BREVO_API_KEY = "test-disabled";
 process.env.BREVO_SENDER_EMAIL = "test@example.com";
+process.env.CLIENT_NOTIFICATION_EMAIL = "owner@example.com";
 process.env.CLOUDINARY_CLOUD_NAME = "test-disabled";
 process.env.CLOUDINARY_API_KEY = "test-disabled";
 process.env.CLOUDINARY_API_SECRET = "test-disabled";
