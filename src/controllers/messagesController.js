@@ -194,6 +194,15 @@ export async function sendMessage(req, res) {
         body: trimmedText,
         data: { type: "new-message", otherUserId: req.user.id },
       });
+    } else {
+      // Otherwise silent — logged so "no notification at all" is
+      // distinguishable from "sent but Expo/FCM failed to deliver it"
+      // (pushService's own per-ticket logging covers that second case).
+      console.log(
+        `No push sent for message to ${recipientId}: ${
+          !recipient?.pushToken ? "no pushToken on file" : "notifications disabled"
+        }`
+      );
     }
 
     res.json({ success: true, message });
