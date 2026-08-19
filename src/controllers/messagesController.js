@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { connectDB } from "../config/db.js";
 import Conversation from "../models/Conversation.js";
 import Message from "../models/Message.js";
@@ -89,6 +90,15 @@ export async function listConversations(req, res) {
 // runs that long.
 export async function getMessages(req, res) {
   try {
+    // A malformed/missing :otherUserId (seen in practice as the literal
+    // string "undefined" — a client bug, not a real id) would otherwise
+    // reach Enrollment.findOne and blow up as an unhandled Mongoose
+    // CastError instead of a clean 400.
+    if (!mongoose.isValidObjectId(req.params.otherUserId)) {
+      res.status(400).json({ success: false, message: "Invalid user id." });
+      return;
+    }
+
     await connectDB();
 
     const pair = await resolveCounterpart(req, req.params.otherUserId);
@@ -143,6 +153,10 @@ export async function sendMessage(req, res) {
     const trimmedText = text.trim();
     if (trimmedText.length > MAX_TEXT_LENGTH) {
       res.status(400).json({ success: false, message: "Message is too long." });
+      return;
+    }
+    if (!mongoose.isValidObjectId(req.params.otherUserId)) {
+      res.status(400).json({ success: false, message: "Invalid user id." });
       return;
     }
 

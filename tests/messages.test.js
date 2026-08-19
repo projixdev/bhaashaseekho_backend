@@ -180,6 +180,22 @@ describe("POST /api/messages/conversations/:otherUserId", () => {
     expect(res.status).toBe(400);
   });
 
+  // Reproduces a real production incident: a client-side nav bug sent the
+  // literal string "undefined" as :otherUserId, which previously reached
+  // Enrollment.findOne and crashed as an unhandled Mongoose CastError
+  // instead of a clean 400.
+  test("otherUserId that isn't a valid ObjectId → 400, not a 500", async () => {
+    const teacher = await createTeacher();
+
+    const res = await request(app)
+      .post("/api/messages/conversations/undefined")
+      .set("Authorization", `Bearer ${signToken(teacher)}`)
+      .send({ text: "Hi" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBe("Invalid user id.");
+  });
+
   test("a second message reuses the same conversation instead of creating another", async () => {
     const teacher = await createTeacher();
     const student = await createStudent();
@@ -271,5 +287,16 @@ describe("GET /api/messages/conversations/:otherUserId", () => {
       .set("Authorization", `Bearer ${signToken(teacher)}`);
 
     expect(res.status).toBe(403);
+  });
+
+  test("otherUserId that isn't a valid ObjectId → 400, not a 500", async () => {
+    const teacher = await createTeacher();
+
+    const res = await request(app)
+      .get("/api/messages/conversations/undefined")
+      .set("Authorization", `Bearer ${signToken(teacher)}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBe("Invalid user id.");
   });
 });
