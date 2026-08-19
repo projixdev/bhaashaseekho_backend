@@ -69,8 +69,8 @@ describe("sendPushNotifications (Expo push API caller)", () => {
     expect(url).toBe("https://exp.host/--/api/v2/push/send");
     const body = JSON.parse(opts.body);
     expect(body).toEqual([
-      { to: "token-a", title: "Hi", body: "There" },
-      { to: "token-b", title: "Hi", body: "There" },
+      { to: "token-a", title: "Hi", body: "There", sound: "default", priority: "high", channelId: "default" },
+      { to: "token-b", title: "Hi", body: "There", sound: "default", priority: "high", channelId: "default" },
     ]);
   });
 
