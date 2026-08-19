@@ -24,7 +24,7 @@ async function activeEnrollmentStudentIds(tutorId, studentIds) {
   return new Set(enrollments.map((e) => e.student.toString()));
 }
 
-const RECIPIENT_FIELDS = "name email pushToken";
+const RECIPIENT_FIELDS = "name email pushToken notificationsEnabled";
 
 // The single source of truth for "who is allowed to hear about this class" —
 // every class-related notification (starting-soon reminders, cancel/postpone)

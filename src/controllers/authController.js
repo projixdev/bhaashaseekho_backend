@@ -212,9 +212,11 @@ export async function verifyOtp(req, res) {
         id: user._id,
         phone: user.phone,
         name: user.name,
+        email: user.email || "",
         role: user.role,
         isAdmin: user.isAdmin,
         isTrial: user.isTrial,
+        notificationsEnabled: user.notificationsEnabled,
       },
     });
   } catch (err) {

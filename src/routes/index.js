@@ -11,6 +11,7 @@ import notificationRoutes from "./notificationRoutes.js";
 import messagesRoutes from "./messagesRoutes.js";
 import enrollmentRoutes from "./enrollmentRoutes.js";
 import supportRoutes from "./supportRoutes.js";
+import profileRoutes from "./profileRoutes.js";
 
 const router = Router();
 
@@ -26,5 +27,6 @@ router.use("/notifications", notificationRoutes);
 router.use("/messages", messagesRoutes);
 router.use("/enrollment", enrollmentRoutes);
 router.use("/support", supportRoutes);
+router.use("/profile", profileRoutes);
 
 export default router;

@@ -11,7 +11,11 @@ function formatClassTime(date) {
 }
 
 async function pushToAll(users, payload) {
-  const tokens = users.filter(Boolean).map((u) => u.pushToken).filter(Boolean);
+  const tokens = users
+    .filter(Boolean)
+    .filter((u) => u.notificationsEnabled !== false)
+    .map((u) => u.pushToken)
+    .filter(Boolean);
   if (tokens.length === 0) return;
   await sendPushNotifications(tokens, payload);
 }

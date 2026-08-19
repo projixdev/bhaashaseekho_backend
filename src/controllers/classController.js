@@ -53,11 +53,38 @@ export async function listUpcomingClasses(req, res) {
 
     const response = { success: true, classes };
 
-    // Teacher-only stat for the app's Profile screen — piggybacks on this
-    // endpoint (already the one the teacher's Home/Classes screens call)
-    // rather than a whole new route just for one number.
+    // Both stats below are for the app's Profile screen — piggyback on
+    // this endpoint (already the one each role's Home/Classes screens
+    // call) rather than a whole new route just for a couple of numbers.
     if (req.user.role === "teacher") {
-      response.completedCount = await Class.countDocuments({ tutor: req.user.id, status: "completed" });
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+      const [completedCount, completedThisMonthCount] = await Promise.all([
+        Class.countDocuments({ tutor: req.user.id, status: "completed" }),
+        Class.countDocuments({
+          tutor: req.user.id,
+          status: "completed",
+          scheduledAt: { $gte: monthStart, $lt: monthEnd },
+        }),
+      ]);
+      response.completedCount = completedCount;
+      response.completedThisMonthCount = completedThisMonthCount;
+    } else {
+      // % of this student's own attendance entries marked "present" across
+      // every completed class they were in — "partial" doesn't count as
+      // present here, same as everywhere else attendance status is treated
+      // as a strict tri-state rather than a fraction.
+      const completedClasses = await Class.find({ students: req.user.id, status: "completed" })
+        .select("attendance")
+        .lean();
+      const myEntries = completedClasses
+        .map((c) => c.attendance.find((a) => a.student.toString() === req.user.id))
+        .filter(Boolean);
+      response.attendancePercent = myEntries.length
+        ? Math.round((myEntries.filter((e) => e.status === "present").length / myEntries.length) * 100)
+        : null;
     }
 
     res.json(response);

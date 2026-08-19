@@ -222,6 +222,28 @@ describe("PATCH /api/classes/:id/status — immediate cancel/postpone notificati
     expect(emailedTo).not.toContain(stu3.email);
   });
 
+  test("a recipient with notificationsEnabled: false is excluded from the push, but still gets the email", async () => {
+    const teacher1 = await createTeacher();
+    const stu1 = await createStudent();
+    await createEnrollment({ student: stu1, tutor: teacher1 });
+    await withPushToken(teacher1, "tutor-token");
+    await withPushToken(stu1, "stu1-token");
+    const { default: User } = await import("../src/models/User.js");
+    await User.findByIdAndUpdate(stu1._id, { notificationsEnabled: false });
+
+    const cls = await createClass({ tutor: teacher1, students: [stu1], scheduledAt: new Date(Date.now() + 3600 * 1000) });
+
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+
+    await updateStatus(teacher1, cls._id, { status: "cancelled" });
+
+    const pushedTokens = JSON.parse(fetchMock.mock.calls[0][1].body).map((m) => m.to);
+    expect(pushedTokens).toEqual(["tutor-token"]);
+
+    const emailedTo = sendTransactionalEmail.mock.calls.map((c) => c[0].to);
+    expect(emailedTo).toContain(stu1.email);
+  });
+
   test("postpone with a new scheduledAt → email/push copy includes the new time, class.scheduledAt updates", async () => {
     const teacher = await createTeacher();
     const student = await createStudent();

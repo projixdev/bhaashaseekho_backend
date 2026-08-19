@@ -22,3 +22,24 @@ export async function registerPushToken(req, res) {
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }
+
+// The app's Profile screen toggle — doesn't touch pushToken itself (a
+// re-enable shouldn't require re-registering), every push-sending path
+// just checks this flag alongside pushToken before sending.
+export async function updateNotificationPreferences(req, res) {
+  try {
+    const { enabled } = req.body;
+    if (typeof enabled !== "boolean") {
+      res.status(400).json({ success: false, message: "enabled must be true or false." });
+      return;
+    }
+
+    await connectDB();
+    await User.findByIdAndUpdate(req.user.id, { $set: { notificationsEnabled: enabled } });
+
+    res.json({ success: true, notificationsEnabled: enabled });
+  } catch (err) {
+    console.error("PATCH /api/notifications/preferences failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}

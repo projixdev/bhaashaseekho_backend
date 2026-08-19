@@ -248,3 +248,53 @@ describe("GET /api/feedback", () => {
     expect(res.body.feedback).toEqual([]);
   });
 });
+
+describe("GET /api/feedback/me", () => {
+  test("any teacher (not just admin) sees their own % positive across their own feedback only", async () => {
+    const teacherA = await createTeacher();
+    const teacherB = await createTeacher();
+    const studentA1 = await createStudent();
+    const studentA2 = await createStudent();
+    const studentB = await createStudent();
+    const clsA1 = await createClass({
+      tutor: teacherA,
+      students: [studentA1],
+      scheduledAt: new Date(),
+      attendance: [{ studentId: studentA1._id.toString(), status: "present" }],
+    });
+    const clsA2 = await createClass({
+      tutor: teacherA,
+      students: [studentA2],
+      scheduledAt: new Date(),
+      attendance: [{ studentId: studentA2._id.toString(), status: "present" }],
+    });
+    const clsB = await createClass({
+      tutor: teacherB,
+      students: [studentB],
+      scheduledAt: new Date(),
+      attendance: [{ studentId: studentB._id.toString(), status: "present" }],
+    });
+    await submitFeedback(studentA1, { classId: clsA1._id.toString(), sentiment: "agree" });
+    await submitFeedback(studentA2, { classId: clsA2._id.toString(), sentiment: "disagree" });
+    await submitFeedback(studentB, { classId: clsB._id.toString(), sentiment: "agree" }); // teacherB's, must not count for A
+
+    const res = await request(app).get("/api/feedback/me").set("Authorization", `Bearer ${signToken(teacherA)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalCount).toBe(2);
+    expect(res.body.positivePercent).toBe(50);
+  });
+
+  test("no feedback yet → positivePercent is null, not 0", async () => {
+    const teacher = await createTeacher();
+    const res = await request(app).get("/api/feedback/me").set("Authorization", `Bearer ${signToken(teacher)}`);
+    expect(res.body.totalCount).toBe(0);
+    expect(res.body.positivePercent).toBeNull();
+  });
+
+  test("a student → 403", async () => {
+    const student = await createStudent();
+    const res = await request(app).get("/api/feedback/me").set("Authorization", `Bearer ${signToken(student)}`);
+    expect(res.status).toBe(403);
+  });
+});

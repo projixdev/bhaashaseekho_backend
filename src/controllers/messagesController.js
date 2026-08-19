@@ -186,9 +186,9 @@ export async function sendMessage(req, res) {
     const recipientId = req.user.role === "teacher" ? pair.student : pair.tutor;
     const [sender, recipient] = await Promise.all([
       User.findById(req.user.id).select("name").lean(),
-      User.findById(recipientId).select("pushToken").lean(),
+      User.findById(recipientId).select("pushToken notificationsEnabled").lean(),
     ]);
-    if (recipient?.pushToken) {
+    if (recipient?.pushToken && recipient.notificationsEnabled !== false) {
       await sendPushNotifications([recipient.pushToken], {
         title: sender?.name || "New message",
         body: trimmedText,

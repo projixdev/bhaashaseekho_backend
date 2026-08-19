@@ -7,7 +7,7 @@ function assignmentLabel(assignment) {
 }
 
 async function pushTo(user, payload) {
-  if (!user?.pushToken) return;
+  if (!user?.pushToken || user.notificationsEnabled === false) return;
   await sendPushNotifications([user.pushToken], payload);
 }
 

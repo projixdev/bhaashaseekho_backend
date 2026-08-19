@@ -58,6 +58,29 @@ describe("POST /api/notifications/register-token", () => {
   });
 });
 
+describe("PATCH /api/notifications/preferences", () => {
+  test("turns notifications off, saved on the user", async () => {
+    const student = await createStudent();
+    const res = await request(app)
+      .patch("/api/notifications/preferences")
+      .set("Authorization", `Bearer ${signToken(student)}`)
+      .send({ enabled: false });
+
+    expect(res.status).toBe(200);
+    expect(res.body.notificationsEnabled).toBe(false);
+    expect((await User.findById(student._id)).notificationsEnabled).toBe(false);
+  });
+
+  test("non-boolean enabled → 400", async () => {
+    const student = await createStudent();
+    const res = await request(app)
+      .patch("/api/notifications/preferences")
+      .set("Authorization", `Bearer ${signToken(student)}`)
+      .send({ enabled: "yes" });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("sendPushNotifications (Expo push API caller)", () => {
   test("sends one request for a small batch, with the right payload shape", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });

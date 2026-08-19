@@ -74,6 +74,13 @@ const UserSchema = new mongoose.Schema(
     // notification permission and gotten one back.
     pushToken: { type: String, default: null },
 
+    // Off switch for the app's own Profile screen notification toggle —
+    // every push-sending path (classNotifications, assignmentNotifications,
+    // messagesController, monthlyReloginReminder) checks this alongside
+    // pushToken before sending. true (not opted out) is the default so
+    // existing accounts keep their current behavior unchanged.
+    notificationsEnabled: { type: Boolean, default: true },
+
     // Which languages this teacher teaches (Phase 21) — filters the tutor
     // dropdown in the admin dashboard's Add Student flow so a course's tutor
     // list only shows teachers actually qualified for that language. Only

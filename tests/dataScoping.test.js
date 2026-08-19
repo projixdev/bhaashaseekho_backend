@@ -62,6 +62,45 @@ describe("GET /api/classes scoping", () => {
     const asStudent = await request(app).get("/api/classes").set("Authorization", `Bearer ${signToken(student)}`);
     expect(asStudent.body.completedCount).toBeUndefined();
   });
+
+  test("teacher response includes completedThisMonthCount, scoped to classes scheduled this calendar month", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    const now = new Date();
+    const thisMonth = new Date(now.getFullYear(), now.getMonth(), 15);
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+    await createClass({ tutor: teacher, students: [student], scheduledAt: thisMonth, status: "completed" });
+    await createClass({ tutor: teacher, students: [student], scheduledAt: lastMonth, status: "completed" });
+
+    const res = await request(app).get("/api/classes").set("Authorization", `Bearer ${signToken(teacher)}`);
+    expect(res.body.completedThisMonthCount).toBe(1);
+  });
+
+  test("student response includes attendancePercent across their own completed classes only", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date(),
+      attendance: [{ studentId: student._id.toString(), status: "present" }],
+    });
+    await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date(),
+      attendance: [{ studentId: student._id.toString(), status: "absent" }],
+    });
+
+    const res = await request(app).get("/api/classes").set("Authorization", `Bearer ${signToken(student)}`);
+    expect(res.body.attendancePercent).toBe(50);
+  });
+
+  test("student with no completed classes yet → attendancePercent is null, not 0", async () => {
+    const student = await createStudent();
+    const res = await request(app).get("/api/classes").set("Authorization", `Bearer ${signToken(student)}`);
+    expect(res.body.attendancePercent).toBeNull();
+  });
 });
 
 describe("GET /api/classes?from=&to= — date-range view for the app's week calendar (Phase 19 Part 3)", () => {

@@ -213,6 +213,25 @@ describe("POST /api/messages/conversations/:otherUserId", () => {
     expect(await Conversation.countDocuments()).toBe(1);
     expect(await Message.countDocuments()).toBe(2);
   });
+
+  test("a recipient with notificationsEnabled: false never gets a push, even with a pushToken", async () => {
+    const { jest } = await import("@jest/globals");
+    const { default: User } = await import("../src/models/User.js");
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createEnrollment({ student, tutor: teacher });
+    await User.findByIdAndUpdate(student._id, { pushToken: "stu-token", notificationsEnabled: false });
+
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "" });
+
+    await request(app)
+      .post(`/api/messages/conversations/${student._id}`)
+      .set("Authorization", `Bearer ${signToken(teacher)}`)
+      .send({ text: "Hi" });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
 });
 
 describe("GET /api/messages/conversations/:otherUserId", () => {

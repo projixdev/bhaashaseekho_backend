@@ -16,6 +16,7 @@ export async function runMonthlyReloginReminder() {
   const users = await User.find({
     role: { $in: ["student", "teacher"] },
     pushToken: { $ne: null },
+    notificationsEnabled: { $ne: false },
   })
     .select("pushToken")
     .lean();

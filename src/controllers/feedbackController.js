@@ -119,3 +119,27 @@ export async function listFeedback(req, res) {
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }
+
+// Any teacher's own aggregate, not admin-gated like listFeedback above —
+// there's no per-class rating in this app (sentiment is thumbs up/down,
+// not a 1-5 scale), so "rating" on the Profile screen is % positive across
+// this teacher's own feedback. positivePercent is null (not 0) with zero
+// feedback so the app can show "No feedback yet" instead of a misleading 0%.
+export async function getMyFeedbackStats(req, res) {
+  try {
+    await connectDB();
+
+    const feedback = await Feedback.find({ tutor: req.user.id }).select("sentiment").lean();
+    const totalCount = feedback.length;
+    const positiveCount = feedback.filter((f) => f.sentiment === "agree").length;
+
+    res.json({
+      success: true,
+      totalCount,
+      positivePercent: totalCount ? Math.round((positiveCount / totalCount) * 100) : null,
+    });
+  } catch (err) {
+    console.error("GET /api/feedback/me failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
