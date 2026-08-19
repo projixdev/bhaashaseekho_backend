@@ -13,6 +13,7 @@ jest.unstable_mockModule("../src/services/brevoService.js", () => ({
 
 const { default: app } = await import("../src/app.js");
 const { default: Feedback } = await import("../src/models/Feedback.js");
+const { default: Class } = await import("../src/models/Class.js");
 
 beforeAll(connectTestDB);
 afterEach(clearTestDB);
@@ -223,5 +224,27 @@ describe("GET /api/feedback", () => {
       tutor: { name: "Sudi" },
       class: { subject: "Hindi" },
     });
+  });
+
+  // Reproduces a real production incident: the app crashed rendering
+  // item.class.subject for a feedback record whose class had since been
+  // deleted (populate() silently resolves a dangling reference to null).
+  test("a feedback record whose class was deleted since is excluded, not a crash", async () => {
+    const admin = await createTeacher({ isAdmin: true });
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    const cls = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date(),
+      attendance: [{ studentId: student._id.toString(), status: "present" }],
+    });
+    await submitFeedback(student, { classId: cls._id.toString(), sentiment: "agree" });
+    await Class.findByIdAndDelete(cls._id);
+
+    const res = await request(app).get("/api/feedback").set("Authorization", `Bearer ${signToken(admin)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.feedback).toEqual([]);
   });
 });

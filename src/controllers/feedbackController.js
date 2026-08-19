@@ -106,7 +106,14 @@ export async function listFeedback(req, res) {
       .populate("class", "subject scheduledAt")
       .lean();
 
-    res.json({ success: true, feedback });
+    // A student/tutor/class deleted after feedback was left behind orphans
+    // the reference — populate() resolves that field to null rather than
+    // erroring, and the app can't render a card missing any of the three.
+    // Same shape as rosterController's filter for an enrollment whose
+    // student no longer exists.
+    const clean = feedback.filter((f) => f.student && f.tutor && f.class);
+
+    res.json({ success: true, feedback: clean });
   } catch (err) {
     console.error("GET /api/feedback failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
