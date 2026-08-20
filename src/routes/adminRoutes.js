@@ -10,6 +10,8 @@ import {
   updateTeacher,
   deleteTeacher,
   reactivateTeacher,
+  approveTeachableCourse,
+  rejectTeachableCourse,
   listAdminStudents,
   createStudent,
   getAdminStudent,
@@ -35,6 +37,8 @@ router.get("/teachers/:id", requireAuth, requireAdmin, getAdminTeacher);
 router.patch("/teachers/:id", requireAuth, requireAdmin, updateTeacher);
 router.delete("/teachers/:id", requireAuth, requireAdmin, deleteTeacher);
 router.patch("/teachers/:id/reactivate", requireAuth, requireAdmin, reactivateTeacher);
+router.patch("/teachers/:id/teachable-courses/:courseSlug", requireAuth, requireAdmin, approveTeachableCourse);
+router.delete("/teachers/:id/teachable-courses/:courseSlug", requireAuth, requireAdmin, rejectTeachableCourse);
 
 router.get("/students", requireAuth, requireAdmin, listAdminStudents);
 router.post("/students", requireAuth, requireAdmin, createStudent);

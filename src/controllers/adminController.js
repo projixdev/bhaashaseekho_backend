@@ -236,6 +236,7 @@ async function buildTeacherRows(teachers) {
       phone: t.phone,
       email: t.email || null,
       languages: t.languages ?? [],
+      teachableCourses: t.teachableCourses ?? [],
       // A doc written before isActive existed never had it persisted at
       // all (missing key, not false) — same fallback pattern already used
       // for completedClassCount/isTrial below, so a legacy account reads
@@ -257,7 +258,10 @@ export async function listAdminTeachers(req, res) {
 
     // Deactivated teachers stay in this list (the dashboard shows them
     // greyed-out via isActive, not removed) — no isActive filter here.
-    const teachers = await User.find({ role: "teacher" }).select("name phone email isActive languages").sort({ name: 1 }).lean();
+    const teachers = await User.find({ role: "teacher" })
+      .select("name phone email isActive languages teachableCourses")
+      .sort({ name: 1 })
+      .lean();
     const result = await buildTeacherRows(teachers);
 
     res.json({ success: true, teachers: result });
@@ -272,7 +276,7 @@ export async function getAdminTeacher(req, res) {
     await connectDB();
 
     const teacher = await User.findOne({ _id: req.params.id, role: "teacher" })
-      .select("name phone email isActive languages")
+      .select("name phone email isActive languages teachableCourses")
       .lean();
     if (!teacher) {
       res.status(404).json({ success: false, message: "Teacher not found." });
@@ -363,6 +367,63 @@ export async function updateTeacher(req, res) {
     });
   } catch (err) {
     console.error("PATCH /api/admin/teachers/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Approves a teacher's pending course request (Phase 22 course discovery) —
+// flips that one entry's status to "approved". "Rejected" isn't a status
+// value (see User.js's teachableCourses comment — only pending/approved
+// exist); rejectTeachableCourse below removes the entry entirely instead of
+// storing a permanent rejected record, so the course just reverts to
+// requestable.
+export async function approveTeachableCourse(req, res) {
+  try {
+    await connectDB();
+
+    const teacher = await User.findOne({ _id: req.params.id, role: "teacher" });
+    if (!teacher) {
+      res.status(404).json({ success: false, message: "Teacher not found." });
+      return;
+    }
+
+    const entry = teacher.teachableCourses.find((c) => c.courseSlug === req.params.courseSlug);
+    if (!entry) {
+      res.status(404).json({ success: false, message: "No such course request." });
+      return;
+    }
+
+    entry.status = "approved";
+    await teacher.save();
+
+    res.json({ success: true, teachableCourses: teacher.teachableCourses });
+  } catch (err) {
+    console.error("PATCH /api/admin/teachers/:id/teachable-courses/:courseSlug failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+export async function rejectTeachableCourse(req, res) {
+  try {
+    await connectDB();
+
+    const teacher = await User.findOne({ _id: req.params.id, role: "teacher" });
+    if (!teacher) {
+      res.status(404).json({ success: false, message: "Teacher not found." });
+      return;
+    }
+
+    const before = teacher.teachableCourses.length;
+    teacher.teachableCourses = teacher.teachableCourses.filter((c) => c.courseSlug !== req.params.courseSlug);
+    if (teacher.teachableCourses.length === before) {
+      res.status(404).json({ success: false, message: "No such course request." });
+      return;
+    }
+    await teacher.save();
+
+    res.json({ success: true, teachableCourses: teacher.teachableCourses });
+  } catch (err) {
+    console.error("DELETE /api/admin/teachers/:id/teachable-courses/:courseSlug failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }

@@ -12,6 +12,7 @@ import messagesRoutes from "./messagesRoutes.js";
 import enrollmentRoutes from "./enrollmentRoutes.js";
 import supportRoutes from "./supportRoutes.js";
 import profileRoutes from "./profileRoutes.js";
+import teacherCoursesRoutes from "./teacherCoursesRoutes.js";
 
 const router = Router();
 
@@ -28,5 +29,6 @@ router.use("/messages", messagesRoutes);
 router.use("/enrollment", enrollmentRoutes);
 router.use("/support", supportRoutes);
 router.use("/profile", profileRoutes);
+router.use("/teacher-courses", teacherCoursesRoutes);
 
 export default router;

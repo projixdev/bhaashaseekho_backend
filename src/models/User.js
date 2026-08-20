@@ -89,6 +89,24 @@ const UserSchema = new mongoose.Schema(
     // showing every active teacher for a course until at least one is
     // tagged for that language (see adminController.buildTeacherRows).
     languages: { type: [String], enum: ["kannada", "hindi", "telugu"], default: [] },
+
+    // Which of the 12 language x sub-course combinations this teacher is
+    // approved to teach (Phase 22 course discovery) — a status list rather
+    // than a boolean per course, since a teacher can request one and have it
+    // pending while already approved for others. Only ever set for
+    // role: "teacher". "pending" means requested but not yet reviewed by
+    // admin; rejecting a request removes its entry entirely rather than
+    // storing a third status, so the course just reverts to requestable.
+    teachableCourses: {
+      type: [
+        {
+          _id: false,
+          courseSlug: { type: String, required: true, trim: true, lowercase: true },
+          status: { type: String, enum: ["pending", "approved"], default: "pending" },
+        },
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );

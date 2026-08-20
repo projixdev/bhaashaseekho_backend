@@ -1,22 +1,28 @@
 import { connectDB } from "../config/db.js";
 import Lead from "../models/Lead.js";
-import { sendTransactionalEmail } from "../services/brevoService.js";
+import { isValidCourseSlug } from "../utils/courseTaxonomy.js";
 import { isHoneypotTriggered } from "../utils/honeypot.js";
 import { validateLeadInput, escapeHtml } from "../utils/validation.js";
 import { renderEmailLayout, emailButton, emailInfoBox, getWhatsAppUrl } from "../services/emailTemplates.js";
 import { env } from "../config/env.js";
 
-function buildOwnerEmailHtml(body) {
+function buildOwnerEmailHtml(body, isCourseRequest) {
+  const heading = isCourseRequest ? "Course request from an existing student" : "New lead";
   const inner = `
-    <h2 style="margin:0 0 16px; font-size:18px; color:#f1f5f9;">New lead</h2>
+    <h2 style="margin:0 0 16px; font-size:18px; color:#f1f5f9;">${escapeHtml(heading)}</h2>
     <p style="margin:0 0 8px;"><strong>Name:</strong> ${escapeHtml(body.name)}</p>
     <p style="margin:0 0 8px;"><strong>Phone:</strong> ${escapeHtml(body.phone)}</p>
     <p style="margin:0 0 8px;"><strong>Email:</strong> ${escapeHtml(body.email || "-")}</p>
     <p style="margin:0 0 8px;"><strong>Interested in:</strong> ${escapeHtml(body.interest)}</p>
+    ${
+      isCourseRequest
+        ? `<p style="margin:0 0 8px;"><strong>This student already has an account</strong> — enroll them in this course from the admin dashboard rather than creating a new one.</p>`
+        : ""
+    }
     <p style="margin:16px 0 0; font-size:13px; color:#94a3b8;">UTM: ${escapeHtml(body.utmSource || "-")} /
       ${escapeHtml(body.utmMedium || "-")} / ${escapeHtml(body.utmCampaign || "-")}</p>
   `;
-  return renderEmailLayout({ preheader: `New lead: ${body.name} (${body.interest})`, bodyHtml: inner });
+  return renderEmailLayout({ preheader: `${heading}: ${body.name} (${body.interest})`, bodyHtml: inner });
 }
 
 // Login is phone + emailed OTP, no static password (ROADMAP.md's auth
@@ -65,6 +71,16 @@ export async function postLead(req, res) {
       return;
     }
 
+    // Set only by the app's authenticated "Request this course" flow
+    // (optionalAuth) — never trusted from the request body itself, so a
+    // public website submission can't forge an association with someone
+    // else's account.
+    const isCourseRequest = Boolean(req.user && body.courseSlug);
+    if (isCourseRequest && !isValidCourseSlug(String(body.courseSlug).trim().toLowerCase())) {
+      res.status(400).json({ success: false, errors: { courseSlug: "Unknown courseSlug." } });
+      return;
+    }
+
     // Saving the lead is the critical path — if this fails, the request
     // fails, because the lead is genuinely lost otherwise.
     await connectDB();
@@ -76,27 +92,38 @@ export async function postLead(req, res) {
       utmSource: (body.utmSource || "").trim(),
       utmMedium: (body.utmMedium || "").trim(),
       utmCampaign: (body.utmCampaign || "").trim(),
+      courseSlug: isCourseRequest ? String(body.courseSlug).trim().toLowerCase() : "",
+      userId: isCourseRequest ? req.user.id : null,
     });
 
     // Both emails are best-effort: the lead is already safely in MongoDB, so
-    // a failed send shouldn't fail the request.
+    // a failed send shouldn't fail the request. sendTransactionalEmail is
+    // imported dynamically (call time, not top-level) — the same fix
+    // supportController.js uses: a static top-level import of brevoService.js
+    // from a file in app.js's module graph previously broke an unrelated
+    // test file's mocked reference to the same module (see supportController
+    // .js's comment for the full story).
     const notifyEmail = env.clientNotificationEmail;
     if (notifyEmail) {
       try {
+        const { sendTransactionalEmail } = await import("../services/brevoService.js");
         await sendTransactionalEmail({
           to: notifyEmail,
-          subject: `New lead: ${body.name} (${body.interest})`,
-          htmlContent: buildOwnerEmailHtml(body),
+          subject: `${isCourseRequest ? "Course request" : "New lead"}: ${body.name} (${body.interest})`,
+          htmlContent: buildOwnerEmailHtml(body, isCourseRequest),
         });
       } catch (ownerErr) {
         console.error("Owner notification failed for lead:", ownerErr);
       }
     }
 
-    // Only the owner notification is guaranteed — the visitor confirmation
-    // email requires an email address, which is optional on this form.
-    if (body.email) {
+    // The "your demo login is on its way" copy only makes sense for a
+    // brand-new visitor — an existing, already-logged-in student requesting
+    // another course gets its own in-app confirmation instead (see the
+    // app's course-request screen), so skip this email for that case.
+    if (body.email && !isCourseRequest) {
       try {
+        const { sendTransactionalEmail } = await import("../services/brevoService.js");
         await sendTransactionalEmail({
           to: body.email,
           subject: "Your demo login is on its way — Bhaasha Seekho",

@@ -983,3 +983,91 @@ describe("DELETE /api/admin/enrollments/:id — Phase 21 Part 4, removing a cour
     expect(res.status).toBe(401);
   });
 });
+
+// Phase 22 course discovery: admin approving/rejecting a teacher's "I can
+// teach this" request. GET /api/admin/teachers (and the single-teacher GET)
+// already carry teachableCourses via buildTeacherRows — covered implicitly
+// by the shape assertion in the first describe block above; these tests
+// focus on the two new mutating routes.
+describe("PATCH /api/admin/teachers/:id/teachable-courses/:courseSlug (approve)", () => {
+  test("admin token → 200, that entry flips to approved, others untouched", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+    await User.findByIdAndUpdate(teacher._id, {
+      teachableCourses: [
+        { courseSlug: "kannada-speaking", status: "pending" },
+        { courseSlug: "hindi-academics", status: "pending" },
+      ],
+    });
+
+    const res = await request(app)
+      .patch(`/api/admin/teachers/${teacher._id}/teachable-courses/kannada-speaking`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    const stored = await User.findById(teacher._id).lean();
+    expect(stored.teachableCourses).toEqual(
+      expect.arrayContaining([
+        { courseSlug: "kannada-speaking", status: "approved" },
+        { courseSlug: "hindi-academics", status: "pending" },
+      ])
+    );
+  });
+
+  test("courseSlug the teacher never requested → 404", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+
+    const res = await request(app)
+      .patch(`/api/admin/teachers/${teacher._id}/teachable-courses/kannada-speaking`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(404);
+  });
+
+  test("non-admin token → 403", async () => {
+    const teacher = await createTeacher();
+    await User.findByIdAndUpdate(teacher._id, { teachableCourses: [{ courseSlug: "kannada-speaking", status: "pending" }] });
+
+    const res = await request(app)
+      .patch(`/api/admin/teachers/${teacher._id}/teachable-courses/kannada-speaking`)
+      .set("Authorization", `Bearer ${signToken(teacher)}`);
+
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("DELETE /api/admin/teachers/:id/teachable-courses/:courseSlug (reject)", () => {
+  test("admin token → 200, entry removed entirely (not marked rejected)", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+    await User.findByIdAndUpdate(teacher._id, {
+      teachableCourses: [{ courseSlug: "kannada-speaking", status: "pending" }],
+    });
+
+    const res = await request(app)
+      .delete(`/api/admin/teachers/${teacher._id}/teachable-courses/kannada-speaking`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    const stored = await User.findById(teacher._id);
+    expect(stored.teachableCourses).toEqual([]);
+  });
+
+  test("courseSlug the teacher never requested → 404", async () => {
+    const token = await adminToken();
+    const teacher = await createTeacher();
+
+    const res = await request(app)
+      .delete(`/api/admin/teachers/${teacher._id}/teachable-courses/kannada-speaking`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(404);
+  });
+
+  test("no token → 401", async () => {
+    const teacher = await createTeacher();
+    const res = await request(app).delete(`/api/admin/teachers/${teacher._id}/teachable-courses/kannada-speaking`);
+    expect(res.status).toBe(401);
+  });
+});

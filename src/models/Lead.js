@@ -13,6 +13,15 @@ const LeadSchema = new mongoose.Schema(
     utmSource: { type: String, trim: true, default: "" },
     utmMedium: { type: String, trim: true, default: "" },
     utmCampaign: { type: String, trim: true, default: "" },
+    // Set only by the app's "Request this course" flow (an enrolled student
+    // asking for an additional course) — stored loosely, same reasoning as
+    // Enrollment.courseSlug: course content lives in the website repo, not
+    // this database, so no foreign-key/enum here either.
+    courseSlug: { type: String, trim: true, lowercase: true, default: "" },
+    // Only set when the submission came in authenticated (the app, not the
+    // public website form) — lets admin jump straight to the existing
+    // account instead of matching on phone/email by hand.
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
   { timestamps: true }
 );
