@@ -87,6 +87,19 @@ describe("verify-otp", () => {
     expect(decoded.sub).toBe(teacher._id.toString());
   });
 
+  test("accessExpiresAt reflects trial state — null for a permanent student, the real expiry for a trial student", async () => {
+    const permanent = await createStudent();
+    const sentPermanent = await sendOtp(permanent.phone);
+    const permanentRes = await verifyOtp(permanent.phone, sentPermanent.body.devOtp);
+    expect(permanentRes.body.user.accessExpiresAt).toBeNull();
+
+    const expiry = new Date(Date.now() + 60 * 60 * 1000);
+    const trial = await createStudent({ isTrial: true, accessExpiresAt: expiry });
+    const sentTrial = await sendOtp(trial.phone);
+    const trialRes = await verifyOtp(trial.phone, sentTrial.body.devOtp);
+    expect(trialRes.body.user.accessExpiresAt).toBe(expiry.toISOString());
+  });
+
   test("wrong OTP → rejected, 400", async () => {
     const student = await createStudent();
     const correctOtp = generateOtp();

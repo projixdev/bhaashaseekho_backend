@@ -81,3 +81,14 @@ test("no token → 401", async () => {
   const res = await request(app).patch("/api/profile").send({ name: "Hi" });
   expect(res.status).toBe(401);
 });
+
+test("accessExpiresAt reflects trial state — null for a permanent student, the real expiry for a trial student", async () => {
+  const permanent = await createStudent();
+  const permanentRes = await patchProfile(permanent, { name: "Still Permanent" });
+  expect(permanentRes.body.user.accessExpiresAt).toBeNull();
+
+  const expiry = new Date(Date.now() + 60 * 60 * 1000);
+  const trial = await createStudent({ isTrial: true, accessExpiresAt: expiry });
+  const trialRes = await patchProfile(trial, { name: "Still Trial" });
+  expect(trialRes.body.user.accessExpiresAt).toBe(expiry.toISOString());
+});

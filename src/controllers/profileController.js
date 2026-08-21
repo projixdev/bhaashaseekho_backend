@@ -66,6 +66,7 @@ export async function updateProfile(req, res) {
         role: user.role,
         isAdmin: user.isAdmin,
         isTrial: user.isTrial,
+        accessExpiresAt: user.accessExpiresAt,
         notificationsEnabled: user.notificationsEnabled,
       },
     });
