@@ -5,9 +5,19 @@ import User from "../models/User.js";
 import { env } from "../config/env.js";
 import { sendTransactionalEmail } from "../services/brevoService.js";
 import { renderEmailLayout } from "../services/emailTemplates.js";
-import { generateOtp, hashOtp, verifyOtpHash, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../utils/otp.js";
+import { generateOtp, hashOtp, verifyOtpHash, verifyReviewerOtp, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../utils/otp.js";
 import { validatePhoneInput, validateOtpInput, normalizePhone } from "../utils/validation.js";
 import { currentMonthKey } from "../utils/sessionMonth.js";
+
+// REVIEWER BYPASS — Play Store review only, do not remove without checking
+// Play Console sign-in requirements. Single source of truth for "is this
+// the configured reviewer phone" -- used below by sendOtp/verifyOtp and by
+// authRoutes.js's rate-limit exemption, so there's exactly one place that
+// knows this comparison. Always false if REVIEWER_TEST_PHONE isn't set --
+// a real user's phone can never collide with an empty string.
+export function isReviewerPhone(phone) {
+  return Boolean(env.reviewerTestPhone) && phone === normalizePhone(env.reviewerTestPhone);
+}
 
 // sessionId is required (not optional/defaulted here) — the caller must
 // always pass the value it just wrote to user.activeSessionId, so the two
@@ -73,6 +83,15 @@ export async function sendOtp(req, res) {
     }
 
     const phone = normalizePhone(req.body.phone);
+
+    // REVIEWER BYPASS — Play Store review only, do not remove without
+    // checking Play Console sign-in requirements. Runs before connectDB and
+    // before any real OTP is generated -- no email is ever attempted for
+    // this number.
+    if (isReviewerPhone(phone)) {
+      res.json({ success: true, email: "r***@bhaashaseekho.com" });
+      return;
+    }
 
     await connectDB();
 
@@ -155,6 +174,48 @@ export async function verifyOtp(req, res) {
     const phone = normalizePhone(req.body.phone);
     const otp = req.body.otp.trim();
     const forceLogout = req.body.forceLogout === true;
+
+    // REVIEWER BYPASS — Play Store review only, do not remove without
+    // checking Play Console sign-in requirements. Requires an exact phone
+    // AND OTP match (constant-time on the OTP) -- a phone match with the
+    // wrong code falls straight through to the real flow below, which 400s
+    // exactly like any other account with no live OTP issued (this
+    // account's otpHash is never set through the real send-otp path, see
+    // sendOtp's own bypass above). Always mints a fresh session, skipping
+    // the already-logged-in-elsewhere check, so repeated review logins from
+    // different test devices never hit device-takeover friction.
+    if (isReviewerPhone(phone) && env.reviewerTestOtp && verifyReviewerOtp(otp, env.reviewerTestOtp)) {
+      await connectDB();
+      const reviewerUser = await User.findOne({ phone });
+      if (!reviewerUser) {
+        res.status(400).json({ success: false, message: "Request a new code first." });
+        return;
+      }
+
+      const sessionId = crypto.randomUUID();
+      reviewerUser.otpHash = null;
+      reviewerUser.otpExpiresAt = null;
+      reviewerUser.otpAttempts = 0;
+      reviewerUser.activeSessionId = sessionId;
+      await reviewerUser.save();
+
+      res.json({
+        success: true,
+        token: signSession(reviewerUser, sessionId),
+        user: {
+          id: reviewerUser._id,
+          phone: reviewerUser.phone,
+          name: reviewerUser.name,
+          email: reviewerUser.email || "",
+          role: reviewerUser.role,
+          isAdmin: reviewerUser.isAdmin,
+          isTrial: reviewerUser.isTrial,
+          accessExpiresAt: reviewerUser.accessExpiresAt,
+          notificationsEnabled: reviewerUser.notificationsEnabled,
+        },
+      });
+      return;
+    }
 
     await connectDB();
 

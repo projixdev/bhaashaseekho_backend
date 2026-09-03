@@ -30,8 +30,15 @@ function getClientIp(req) {
 
 // Returns an Express middleware scoped to `prefix` (e.g. "leads", "contact")
 // so different routes get independent buckets per client IP.
-export function rateLimit(prefix) {
+// `skip(req)` lets a specific route exempt a specific request from this
+// route's bucket entirely (used by authRoutes.js for the reviewer bypass) --
+// generic here on purpose, this file has no reviewer-specific knowledge.
+export function rateLimit(prefix, { skip } = {}) {
   return function rateLimitMiddleware(req, res, next) {
+    if (skip && skip(req)) {
+      next();
+      return;
+    }
     const { allowed } = checkRateLimit(`${prefix}:${getClientIp(req)}`);
     if (!allowed) {
       res.status(429).json({ success: false, message: "Too many requests. Please try again later." });

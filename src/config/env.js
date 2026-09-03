@@ -43,6 +43,19 @@ export const env = {
 
   whatsappNumber: process.env.WHATSAPP_NUMBER,
 
+  // Google Play Store reviewer test-login bypass (see authController.js's
+  // isReviewerPhone/sendOtp/verifyOtp). Optional -- both must be set
+  // together for the bypass to ever activate; the app works fine with
+  // neither configured. Getters (not plain assignments) so tests can set
+  // process.env.REVIEWER_TEST_PHONE/OTP per-describe-block and have it take
+  // effect immediately, same as they'd behave in a real deploy.
+  get reviewerTestPhone() {
+    return process.env.REVIEWER_TEST_PHONE || "";
+  },
+  get reviewerTestOtp() {
+    return process.env.REVIEWER_TEST_OTP || "";
+  },
+
   // Homework/assessment file uploads — only needed once the assignments
   // submit route is actually hit.
   get cloudinaryCloudName() {

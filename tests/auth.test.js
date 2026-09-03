@@ -132,3 +132,60 @@ describe("verify-otp", () => {
     expect(res.body.message).toBe("Request a new code first.");
   });
 });
+
+describe("reviewer bypass (Play Store review)", () => {
+  const REVIEWER_PHONE = "9812345670";
+  const REVIEWER_OTP = "482913";
+  let originalPhone, originalOtp;
+
+  beforeAll(() => {
+    originalPhone = process.env.REVIEWER_TEST_PHONE;
+    originalOtp = process.env.REVIEWER_TEST_OTP;
+    process.env.REVIEWER_TEST_PHONE = REVIEWER_PHONE;
+    process.env.REVIEWER_TEST_OTP = REVIEWER_OTP;
+  });
+
+  afterAll(() => {
+    if (originalPhone === undefined) delete process.env.REVIEWER_TEST_PHONE;
+    else process.env.REVIEWER_TEST_PHONE = originalPhone;
+    if (originalOtp === undefined) delete process.env.REVIEWER_TEST_OTP;
+    else process.env.REVIEWER_TEST_OTP = originalOtp;
+  });
+
+  test("configured phone + configured OTP → 200, valid session, no email ever attempted", async () => {
+    await createStudent({ phone: REVIEWER_PHONE, name: "Play Store Reviewer", email: "reviewer@bhaashaseekho.com" });
+
+    const callsBefore = sendTransactionalEmail.mock.calls.length;
+    const sent = await sendOtp(REVIEWER_PHONE);
+    expect(sent.status).toBe(200);
+    expect(sendTransactionalEmail.mock.calls.length).toBe(callsBefore); // unchanged -- no email attempt
+
+    const res = await verifyOtp(REVIEWER_PHONE, REVIEWER_OTP);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.user.phone).toBe(REVIEWER_PHONE);
+    expect(res.body.user.role).toBe("student");
+
+    const decoded = jwt.verify(res.body.token, process.env.JWT_SECRET);
+    expect(decoded.sub).toBe(res.body.user.id);
+  });
+
+  test("configured phone + wrong OTP → still fails, not a blanket pass for the phone alone", async () => {
+    await createStudent({ phone: REVIEWER_PHONE });
+
+    const res = await verifyOtp(REVIEWER_PHONE, "111111");
+    expect(res.status).not.toBe(200);
+    expect(res.body.success).toBe(false);
+  });
+
+  test("a real user's own login is unaffected by the reviewer bypass being configured", async () => {
+    const student = await createStudent();
+    const sent = await sendOtp(student.phone);
+    expect(sent.status).toBe(200);
+    expect(sendTransactionalEmail).toHaveBeenCalled();
+
+    const res = await verifyOtp(student.phone, sent.body.devOtp);
+    expect(res.status).toBe(200);
+    expect(res.body.user.id).toBe(student._id.toString());
+  });
+});
