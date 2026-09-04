@@ -34,12 +34,7 @@ export async function runMonthlyReloginReminder() {
 
 // 00:05 on the 1st of each month, Asia/Kolkata (5 minutes past midnight
 // rather than exactly on it, so it isn't the very first thing competing for
-// resources right at the stroke of midnight). Known limitation: on Render's
-// free tier the service spins down when idle, and a sleeping dyno can't run
-// a cron job — this only actually fires if something has kept the service
-// awake, or the next incoming request happens to wake it right around that
-// time. Worth revisiting (a paid always-on plan, or an external cron-ping
-// service) if this needs to be reliable rather than best-effort.
+// resources right at the stroke of midnight).
 export function scheduleMonthlyReloginReminder() {
   cron.schedule(
     "5 0 1 * *",

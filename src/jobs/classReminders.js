@@ -11,9 +11,9 @@ const REMINDER_WINDOWS = [
 // How far off "exactly N minutes before" a class's scheduledAt is still
 // allowed to be and still count as inside that reminder's window. A tick
 // runs every minute (see scheduleClassReminders), so this only needs to be
-// wide enough to survive a delayed/skipped tick (Render free-tier spin-down,
-// a slow previous tick still finishing) — notificationsSent, not this
-// window, is what actually prevents a duplicate send.
+// wide enough to survive a delayed or slow tick (a previous tick still
+// finishing when the next one fires) — notificationsSent, not this window,
+// is what actually prevents a duplicate send.
 const TOLERANCE_MS = 2 * 60 * 1000;
 
 // The actual work, separate from the cron wrapper below — same split as

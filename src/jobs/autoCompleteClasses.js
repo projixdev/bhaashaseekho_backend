@@ -63,10 +63,7 @@ export async function runAutoCompleteClassesTick(now = new Date()) {
   return { completed };
 }
 
-// Every 15 minutes, Asia/Kolkata (same timezone as the other jobs). Same
-// Render free-tier caveat as jobs/monthlyReloginReminder.js: a spun-down
-// dyno can't tick, so a class may sit "upcoming" past its grace period until
-// the next request wakes the service and the following tick catches it.
+// Every 15 minutes, Asia/Kolkata (same timezone as the other jobs).
 export function scheduleAutoCompleteClasses() {
   cron.schedule(
     "*/15 * * * *",
