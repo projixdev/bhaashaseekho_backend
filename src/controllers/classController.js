@@ -186,6 +186,12 @@ const VALID_ATTENDANCE_STATUSES = ["present", "partial", "absent"];
 // must never double-count. Guarded atomically via findOneAndUpdate's status
 // filter below, not a read-then-write check in JS, so it holds even if two
 // requests for the same class are in flight at the same time.
+//
+// Also the retroactive-correction path: if jobs/autoCompleteClasses.js
+// already closed this class as everyone-absent (attendanceMarkedBy:
+// "system"), the tutor can still run End Class once to set real attendance.
+// The atomic guard makes that a one-way, one-time transition too, so the
+// present-student count increments exactly once here as well.
 export async function endClass(req, res) {
   try {
     await connectDB();
@@ -217,15 +223,21 @@ export async function endClass(req, res) {
       return;
     }
 
-    // Only the request that actually flips status away from "completed"
-    // proceeds past this point — a second call (sequential or concurrent)
-    // matches zero documents and falls into the 409 branch below instead.
+    // Only the request that actually claims the class proceeds past this
+    // point — a second call (sequential or concurrent) matches zero
+    // documents and falls into the 409 branch below. An "upcoming" class is
+    // claimable normally; a "completed" one is claimable only while it's
+    // still a system auto-absent record (jobs/autoCompleteClasses.js), which
+    // is how a tutor retroactively fixes attendance for a class they never
+    // ended in-app. Once the tutor's own attendance is recorded
+    // (attendanceMarkedBy: "teacher") the class is final.
     const updatedClass = await Class.findOneAndUpdate(
-      { _id: classDoc._id, status: { $ne: "completed" } },
+      { _id: classDoc._id, $or: [{ status: { $ne: "completed" } }, { attendanceMarkedBy: "system" }] },
       {
         $set: {
           status: "completed",
           attendance: attendance.map((entry) => ({ student: entry.studentId, status: entry.status })),
+          attendanceMarkedBy: "teacher",
         },
       },
       { returnDocument: "after" }

@@ -36,6 +36,13 @@ const ClassSchema = new mongoose.Schema(
         status: { type: String, enum: ["present", "partial", "absent"], required: true },
       },
     ],
+    // Who wrote the attendance array above. null until the class is ended.
+    // "teacher" = the tutor ran End Class; "system" = jobs/autoCompleteClasses.js
+    // closed the class as everyone-absent after its slot + grace period
+    // elapsed with no End Class action. A "system" record is the one
+    // completed state endClass will still overwrite — that's how a tutor
+    // retroactively corrects attendance for a class they never ended in-app.
+    attendanceMarkedBy: { type: String, enum: ["teacher", "system"], default: null },
   },
   { timestamps: true }
 );
