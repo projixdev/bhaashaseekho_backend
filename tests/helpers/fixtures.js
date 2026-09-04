@@ -25,13 +25,14 @@ function nextPhone() {
 // A MongoDB sparse index still indexes a field that's present with value
 // null, so writing null-instead-of-absent here would risk a false unique
 // collision between two "no email" fixtures in the same test.
-function buildUserDoc({ n, phone, name, role, email, defaultEmail, completedClassCount, isAdmin, isTrial, accessExpiresAt }) {
+function buildUserDoc({ n, phone, name, role, email, defaultEmail, completedClassCount, isAdmin, isTrial, accessExpiresAt, timezone }) {
   const doc = { phone: phone ?? nextPhone(), name: name ?? `Test ${role} ${n}`, role };
   if (email !== null) doc.email = email ?? defaultEmail;
   if (completedClassCount !== undefined) doc.completedClassCount = completedClassCount;
   if (isAdmin !== undefined) doc.isAdmin = isAdmin;
   if (isTrial !== undefined) doc.isTrial = isTrial;
   if (accessExpiresAt !== undefined) doc.accessExpiresAt = accessExpiresAt;
+  if (timezone !== undefined) doc.timezone = timezone;
   return doc;
 }
 

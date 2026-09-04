@@ -1,5 +1,6 @@
 import { connectDB } from "../config/db.js";
 import User from "../models/User.js";
+import { normalizeTimezone } from "../utils/timezone.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -26,6 +27,14 @@ export async function updateProfile(req, res) {
         return;
       }
       update.email = trimmedEmail;
+    }
+
+    // Device IANA zone (see authController.applyTimezone) — the app can send
+    // it on a profile save too, not just at login. Ignored if not a real
+    // zone rather than 400'd, same as the login path.
+    if (req.body.timezone !== undefined) {
+      const tz = normalizeTimezone(req.body.timezone);
+      if (tz) update.timezone = tz;
     }
 
     if (Object.keys(update).length === 0) {
@@ -68,6 +77,7 @@ export async function updateProfile(req, res) {
         isTrial: user.isTrial,
         accessExpiresAt: user.accessExpiresAt,
         notificationsEnabled: user.notificationsEnabled,
+        timezone: user.timezone,
       },
     });
   } catch (err) {

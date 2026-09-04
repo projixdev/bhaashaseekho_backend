@@ -12,15 +12,24 @@ function chunk(items, size) {
   return chunks;
 }
 
-// tokens: string[] of Expo push tokens ("ExponentPushToken[...]"). Best-
-// effort per batch — one failed batch is logged and skipped rather than
-// aborting the whole run, since this is fired from a cron job with no user
-// waiting on a response (see jobs/monthlyReloginReminder.js).
+// tokens: string[] of Expo push tokens ("ExponentPushToken[...]"). Every
+// token gets the same title/body/data — the uniform case (monthly reminder,
+// a single-recipient assignment push). For per-recipient copy (class-time
+// text in each person's timezone) use sendPushMessages below.
 export async function sendPushNotifications(tokens, { title, body, data } = {}) {
-  const batches = chunk(tokens, BATCH_SIZE);
+  await sendPushMessages(tokens.map((to) => ({ to, title, body, data })));
+}
+
+// messages: [{ to, title, body, data? }] — fully independent per entry, so
+// two recipients of the same class can get the start time rendered in their
+// own timezones in one batched call. Best-effort per batch: one failed
+// batch is logged and skipped rather than aborting the run, since every
+// caller is fire-and-forget (a cron tick or a post-response notification).
+export async function sendPushMessages(messages) {
+  const batches = chunk(messages, BATCH_SIZE);
 
   for (const batch of batches) {
-    const messages = batch.map((to) => ({
+    const payload = batch.map(({ to, title, body, data }) => ({
       to,
       title,
       body,
@@ -41,7 +50,7 @@ export async function sendPushNotifications(tokens, { title, body, data } = {}) 
       const response = await fetch(EXPO_PUSH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(messages),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -61,7 +70,7 @@ export async function sendPushNotifications(tokens, { title, body, data } = {}) 
       (tickets ?? []).forEach((ticket, i) => {
         if (ticket.status === "error") {
           console.error(
-            `Expo push ticket error for ${batch[i]}: ${ticket.message}${
+            `Expo push ticket error for ${batch[i]?.to}: ${ticket.message}${
               ticket.details?.error ? ` (${ticket.details.error})` : ""
             }`
           );

@@ -81,6 +81,16 @@ const UserSchema = new mongoose.Schema(
     // existing accounts keep their current behavior unchanged.
     notificationsEnabled: { type: Boolean, default: true },
 
+    // IANA zone (e.g. "America/New_York"), sent by the app from the device
+    // on login and push-token registration. Backend-only use: rendering
+    // class-time / due-date text in push + email to each recipient's own
+    // zone (services/classNotifications.js, assignmentNotifications.js). The
+    // *cron trigger* logic never reads this — "class starts in 30 min" is a
+    // UTC comparison against scheduledAt, unaffected by anyone's zone. The
+    // app displays dates using the device clock directly and also doesn't
+    // read this back. Defaults to Asia/Kolkata (see utils/timezone.js).
+    timezone: { type: String, trim: true, default: "Asia/Kolkata" },
+
     // Which languages this teacher teaches (Phase 21) — filters the tutor
     // dropdown in the admin dashboard's Add Student flow so a course's tutor
     // list only shows teachers actually qualified for that language. Only

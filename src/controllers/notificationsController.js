@@ -1,10 +1,14 @@
 import { connectDB } from "../config/db.js";
 import User from "../models/User.js";
+import { normalizeTimezone } from "../utils/timezone.js";
 
 // Called once the app has actually been granted notification permission and
 // obtained an Expo push token — re-sent on every login too (a fresh
 // install/reinstall can get a new token for the same account), so this is
-// an upsert-style overwrite, not a one-time write.
+// an upsert-style overwrite, not a one-time write. Also carries the device
+// IANA zone (the app hits this on every launch, so it's the closest thing
+// to a live timezone refresh for a user who's already logged in and has
+// since travelled) — ignored if not a real zone.
 export async function registerPushToken(req, res) {
   try {
     const { pushToken } = req.body;
@@ -13,8 +17,12 @@ export async function registerPushToken(req, res) {
       return;
     }
 
+    const set = { pushToken: pushToken.trim() };
+    const tz = normalizeTimezone(req.body.timezone);
+    if (tz) set.timezone = tz;
+
     await connectDB();
-    await User.findByIdAndUpdate(req.user.id, { $set: { pushToken: pushToken.trim() } });
+    await User.findByIdAndUpdate(req.user.id, { $set: set });
 
     res.json({ success: true });
   } catch (err) {

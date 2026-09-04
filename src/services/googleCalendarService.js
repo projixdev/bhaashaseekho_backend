@@ -30,9 +30,14 @@ function getCalendarClient() {
 function toEventTimes(scheduledAt, durationMinutes) {
   const start = new Date(scheduledAt);
   const end = new Date(start.getTime() + durationMinutes * 60 * 1000);
+  // dateTime is a UTC instant (toISOString's trailing Z), so timeZone must
+  // say UTC to match — it was "Asia/Kolkata" here, which disagreed with the
+  // Z offset. Google ignores the mismatch for non-recurring events (the
+  // offset wins), but tagging it correctly keeps the event honest if it's
+  // ever inspected or made recurring, and stops implying the class is IST.
   return {
-    start: { dateTime: start.toISOString(), timeZone: "Asia/Kolkata" },
-    end: { dateTime: end.toISOString(), timeZone: "Asia/Kolkata" },
+    start: { dateTime: start.toISOString(), timeZone: "UTC" },
+    end: { dateTime: end.toISOString(), timeZone: "UTC" },
   };
 }
 

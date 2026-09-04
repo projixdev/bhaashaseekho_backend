@@ -1,6 +1,7 @@
 import { sendPushNotifications } from "./pushService.js";
 import { resolveAssignmentRecipients } from "./notificationScope.js";
 import { escapeHtml } from "../utils/validation.js";
+import { formatDateInZone } from "../utils/timezone.js";
 
 function assignmentLabel(assignment) {
   return assignment.type === "assessment" ? "Assessment" : "Homework";
@@ -47,7 +48,7 @@ export async function notifyAssignmentAssigned(assignment) {
     });
 
     const dueLine = assignment.dueDate
-      ? ` — due ${new Date(assignment.dueDate).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}`
+      ? ` — due ${formatDateInZone(assignment.dueDate, student.timezone)}`
       : "";
     await emailTo(student, {
       subject: `New ${label}: ${assignment.title}`,

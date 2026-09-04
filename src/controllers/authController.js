@@ -8,6 +8,7 @@ import { renderEmailLayout } from "../services/emailTemplates.js";
 import { generateOtp, hashOtp, verifyOtpHash, verifyReviewerOtp, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../utils/otp.js";
 import { validatePhoneInput, validateOtpInput, normalizePhone } from "../utils/validation.js";
 import { currentMonthKey } from "../utils/sessionMonth.js";
+import { normalizeTimezone } from "../utils/timezone.js";
 
 // REVIEWER BYPASS — Play Store review only, do not remove without checking
 // Play Console sign-in requirements. Single source of truth for "is this
@@ -50,6 +51,16 @@ function signSession(user, sessionId) {
 
 function isTrialExpired(user) {
   return Boolean(user.isTrial && user.accessExpiresAt && user.accessExpiresAt.getTime() < Date.now());
+}
+
+// The app sends its device IANA zone on every login so User.timezone tracks
+// where the person actually is (used only for notification/email date text —
+// see utils/timezone.js). Silently ignored if absent or not a real zone: the
+// app derives it from the device, so a bad value is a client bug to drop,
+// not a login to fail.
+function applyTimezone(user, value) {
+  const tz = normalizeTimezone(value);
+  if (tz) user.timezone = tz;
 }
 
 // Masked server-side, not client-side — the raw email never goes over the
@@ -197,6 +208,7 @@ export async function verifyOtp(req, res) {
       reviewerUser.otpExpiresAt = null;
       reviewerUser.otpAttempts = 0;
       reviewerUser.activeSessionId = sessionId;
+      applyTimezone(reviewerUser, req.body.timezone);
       await reviewerUser.save();
 
       res.json({
@@ -212,6 +224,7 @@ export async function verifyOtp(req, res) {
           isTrial: reviewerUser.isTrial,
           accessExpiresAt: reviewerUser.accessExpiresAt,
           notificationsEnabled: reviewerUser.notificationsEnabled,
+          timezone: reviewerUser.timezone,
         },
       });
       return;
@@ -264,6 +277,7 @@ export async function verifyOtp(req, res) {
     user.otpExpiresAt = null;
     user.otpAttempts = 0;
     user.activeSessionId = sessionId;
+    applyTimezone(user, req.body.timezone);
     await user.save();
 
     res.json({
@@ -279,6 +293,7 @@ export async function verifyOtp(req, res) {
         isTrial: user.isTrial,
         accessExpiresAt: user.accessExpiresAt,
         notificationsEnabled: user.notificationsEnabled,
+        timezone: user.timezone,
       },
     });
   } catch (err) {
