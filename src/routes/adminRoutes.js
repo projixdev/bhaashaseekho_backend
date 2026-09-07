@@ -19,8 +19,11 @@ import {
   deleteStudent,
   reactivateStudent,
   createEnrollment,
-  reassignEnrollmentTutor,
+  listEnrollments,
+  updateEnrollment,
   deleteEnrollment,
+  listEarnings,
+  settleEarnings,
 } from "../controllers/adminController.js";
 
 const router = Router();
@@ -48,7 +51,14 @@ router.delete("/students/:id", requireAuth, requireAdmin, deleteStudent);
 router.patch("/students/:id/reactivate", requireAuth, requireAdmin, reactivateStudent);
 router.post("/students/:id/enrollments", requireAuth, requireAdmin, createEnrollment);
 
-router.patch("/enrollments/:id", requireAuth, requireAdmin, reassignEnrollmentTutor);
+router.get("/enrollments", requireAuth, requireAdmin, listEnrollments);
+router.patch("/enrollments/:id", requireAuth, requireAdmin, updateEnrollment);
 router.delete("/enrollments/:id", requireAuth, requireAdmin, deleteEnrollment);
+
+// Teacher payouts (per-class points). Read + settle only — nothing here
+// creates or edits a ledger row; those are written solely by
+// classController.endClass when a class is actually completed.
+router.get("/earnings", requireAuth, requireAdmin, listEarnings);
+router.patch("/earnings/settle", requireAuth, requireAdmin, settleEarnings);
 
 export default router;

@@ -1,7 +1,9 @@
 import { connectDB } from "../config/db.js";
 import Class from "../models/Class.js";
 import Enrollment from "../models/Enrollment.js";
+import TeacherEarning from "../models/TeacherEarning.js";
 import User from "../models/User.js";
+import { pointsForCharge } from "../constants/earnings.js";
 import { notifyClassStatusChange } from "../services/classNotifications.js";
 import { createMeetEvent, updateMeetEventTime, deleteMeetEvent } from "../services/googleCalendarService.js";
 
@@ -102,7 +104,7 @@ export async function listUpcomingClasses(req, res) {
 // auto-generated here rather than optionally passed in.
 export async function createClass(req, res) {
   try {
-    const { studentId, subject, scheduledAt, durationMinutes } = req.body;
+    const { studentId, subject, scheduledAt, durationMinutes, courseSlug } = req.body;
 
     if (!studentId || typeof subject !== "string" || !subject.trim() || !scheduledAt) {
       res.status(400).json({ success: false, message: "studentId, subject, and scheduledAt are required." });
@@ -118,8 +120,18 @@ export async function createClass(req, res) {
     await connectDB();
 
     // Only students on this teacher's own roster — same check/message as
-    // assignmentController.createAssignment.
-    const enrollment = await Enrollment.findOne({ tutor: req.user.id, student: studentId });
+    // assignmentController.createAssignment. courseSlug narrows it to one
+    // specific enrollment when the app sends it (the Add Class sheet always
+    // does, since it picks the course from this same roster): a student can
+    // hold two courses with the same teacher, and endClass later needs to
+    // know which one this class charges against. Omitting it stays valid —
+    // an older app build, or a student with only one course — and just
+    // leaves the class unattributed, which endClass handles.
+    const enrollmentFilter = { tutor: req.user.id, student: studentId };
+    if (typeof courseSlug === "string" && courseSlug.trim()) {
+      enrollmentFilter.courseSlug = courseSlug.trim().toLowerCase();
+    }
+    const enrollment = await Enrollment.findOne(enrollmentFilter);
     if (!enrollment) {
       res.status(403).json({ success: false, message: "This student isn't assigned to you." });
       return;
@@ -165,6 +177,10 @@ export async function createClass(req, res) {
       tutor: req.user.id,
       students: [studentId],
       batchType: "1-on-1",
+      // Taken from the enrollment actually matched above, not echoed back
+      // from the request body — so it can only ever name a course this
+      // student is really enrolled in with this teacher.
+      courseSlug: enrollment.courseSlug,
       scheduledAt: parsedScheduledAt,
       durationMinutes: resolvedDuration,
       meetingLink,
@@ -179,6 +195,86 @@ export async function createClass(req, res) {
 }
 
 const VALID_ATTENDANCE_STATUSES = ["present", "partial", "absent"];
+
+// Which Enrollment a completed class should be charged against for one
+// student. Exact when the class carries a courseSlug (Class.courseSlug +
+// the unique (student, courseSlug) index on Enrollment together make this a
+// single, unambiguous document).
+//
+// Classes created before Class.courseSlug existed have none, so they fall
+// back to "the student's only enrollment with this tutor". When that's
+// ambiguous — the student holds two courses with the same teacher — this
+// returns null and the caller credits nothing. Skipping is the right
+// failure here: an uncredited class is visible and fixable, a class charged
+// against the wrong course is a wrong number nobody notices, and the
+// ambiguity only exists on legacy data that predates the field.
+async function findChargeableEnrollment(studentId, classDoc) {
+  if (classDoc.courseSlug) {
+    return Enrollment.findOne({ student: studentId, courseSlug: classDoc.courseSlug }).select("+perClassCharge");
+  }
+
+  const candidates = await Enrollment.find({ student: studentId, tutor: classDoc.tutor })
+    .select("+perClassCharge")
+    .limit(2);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+// Both money-adjacent effects of a class actually happening, for one present
+// student: the teacher's points credit and the student's session decrement.
+// They fire from the same completed-class event, against the same resolved
+// enrollment, and are deliberately not separable — a class that earned the
+// teacher nothing also shouldn't consume a session, and vice versa.
+//
+// Exactly-once is enforced by TeacherEarning's unique (classId, student)
+// index, NOT by endClass's class-level guard. That guard protects the Class
+// document and legitimately lets a retry through for a class
+// jobs/autoCompleteClasses.js already closed as everyone-absent, so it can't
+// be what protects a payout. Here, the ledger insert goes first and acts as
+// the claim: whichever concurrent request loses the race gets a duplicate-key
+// error, returns without touching anything else, and the decrement below is
+// therefore reached exactly once per (class, student) for all time.
+//
+// A null/absent perClassCharge (a free or trial enrollment) skips both
+// effects silently rather than throwing — the class itself completed fine,
+// there's just nothing to charge.
+async function creditCompletedClass(studentId, classDoc) {
+  const enrollment = await findChargeableEnrollment(studentId, classDoc);
+  if (!enrollment?.perClassCharge) return;
+
+  const chargedAmount = enrollment.perClassCharge;
+
+  try {
+    await TeacherEarning.create({
+      // The class's own tutor, not the enrollment's current one. They differ
+      // when an admin hands the student to a new tutor between the class
+      // being taught and it being ended — and the person who taught it is
+      // who gets paid for it. endClass has already verified the caller is
+      // this tutor, so it's also the identity that recorded the attendance
+      // this credit is based on.
+      teacher: classDoc.tutor,
+      student: studentId,
+      enrollment: enrollment._id,
+      classId: classDoc._id,
+      courseSlug: enrollment.courseSlug,
+      // Snapshot, never a live read of perClassCharge again. A later rate
+      // change must not reprice this row — see TeacherEarning.js.
+      chargedAmount,
+      // Rounded exactly once, here. Nothing downstream recomputes it.
+      points: pointsForCharge(chargedAmount),
+    });
+  } catch (err) {
+    // 11000 = the unique (classId, student) index rejecting a retry or a
+    // concurrent duplicate. Already credited; returning here is what makes
+    // the decrement below non-repeatable too.
+    if (err.code === 11000) return;
+    throw err;
+  }
+
+  // $gt: 0 floors the count at 0 in the query itself rather than in JS — a
+  // student who has run out still gets their class taught and their teacher
+  // still gets paid, the counter just stops going down.
+  await Enrollment.updateOne({ _id: enrollment._id, classesRemaining: { $gt: 0 } }, { $inc: { classesRemaining: -1 } });
+}
 
 // Ends a class: records per-student attendance and increments
 // completedClassCount for everyone marked "present". Idempotency is the
@@ -251,6 +347,27 @@ export async function endClass(req, res) {
     const presentIds = attendance.filter((entry) => entry.status === "present").map((entry) => entry.studentId);
     if (presentIds.length > 0) {
       await User.updateMany({ _id: { $in: presentIds } }, { $inc: { completedClassCount: 1 } });
+
+      // Sequential rather than Promise.all: each student resolves their own
+      // enrollment and writes their own ledger row, and a group class is a
+      // handful of students at this scale — no throughput here that's worth
+      // parallelising.
+      //
+      // Isolated per student, and never fatal to the response. By this point
+      // the class is already committed as completed with its attendance —
+      // the atomic claim above saw to that, and a retry would now 409 — so
+      // failing the request would tell the teacher their attendance didn't
+      // save when it did. One student's credit failing also mustn't cost
+      // the others theirs. A miss is loud in the logs and repairable from
+      // the Class document (which student, which class, what attendance),
+      // since the ledger's unique index makes re-running a credit safe.
+      for (const studentId of presentIds) {
+        try {
+          await creditCompletedClass(studentId, updatedClass);
+        } catch (err) {
+          console.error(`TeacherEarning credit failed for class ${updatedClass._id}, student ${studentId}:`, err);
+        }
+      }
     }
 
     res.json({ success: true, class: updatedClass });

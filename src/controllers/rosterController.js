@@ -10,6 +10,11 @@ export async function getRoster(req, res) {
       .sort({ createdAt: 1 })
       .lean();
 
+    // Whitelisted field by field for the same reason as
+    // enrollmentController.getMyEnrollments — Enrollment holds an admin-only
+    // rate that belongs in neither of these responses. classesRemaining is
+    // scheduling context a teacher legitimately needs; perClassCharge is not,
+    // and is select: false besides.
     const students = enrollments
       .filter((e) => e.student)
       .map((e) => ({
@@ -18,6 +23,7 @@ export async function getRoster(req, res) {
         phone: e.student.phone,
         courseSlug: e.courseSlug,
         batchType: e.batchType,
+        classesRemaining: e.classesRemaining ?? 0,
       }));
 
     res.json({ success: true, students });

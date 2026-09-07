@@ -9,8 +9,17 @@
 // app's simpler single-student picker doesn't expose yet.
 //
 // Usage:
-//   node scripts/scheduleClass.js --tutor 9876543210 --students 9123456789 --subject "Hindi Conversation" --at "2026-08-15T18:00" --duration 60 --link https://meet.google.com/xyz
+//   node scripts/scheduleClass.js --tutor 9876543210 --students 9123456789 --subject "Hindi Conversation" --at "2026-08-15T18:00" --course hindi-speaking --duration 60 --link https://meet.google.com/xyz
 //   node scripts/scheduleClass.js --tutor 9876543210 --students 9123456789,9223344556 --subject "Hindi Conversation" --at "2026-08-15T18:00" --batch group
+//
+// --course is optional but recommended — the courseSlug (e.g.
+// "kannada-speaking") this class belongs to. It's what lets endClass charge
+// the class against the right Enrollment when a student holds more than one
+// course with the same teacher; omitting it leaves the class unattributed,
+// and endClass then only credits it if that student has exactly one
+// enrollment with this tutor. It's validated against the students' real
+// enrollments below, so a typo fails loudly instead of scheduling a class
+// nobody gets paid for.
 //
 // --link is optional — omit it and a Google Meet link is generated
 // automatically via the Calendar API, same as the app's own scheduling flow
@@ -22,6 +31,7 @@ import mongoose from "mongoose";
 import { connectDB } from "../src/config/db.js";
 import User from "../src/models/User.js";
 import Class from "../src/models/Class.js";
+import Enrollment from "../src/models/Enrollment.js";
 import { normalizePhone } from "../src/utils/validation.js";
 import { createMeetEvent } from "../src/services/googleCalendarService.js";
 
@@ -46,7 +56,7 @@ async function main() {
 
   if (!args.tutor || !args.students || !args.subject || !args.at) {
     console.error(
-      'Usage: node scripts/scheduleClass.js --tutor <phone> --students <phone,phone,...> --subject "Hindi Conversation" --at "2026-08-15T18:00" [--duration 45] [--link https://...] [--batch 1-on-1|group]'
+      'Usage: node scripts/scheduleClass.js --tutor <phone> --students <phone,phone,...> --subject "Hindi Conversation" --at "2026-08-15T18:00" [--course kannada-speaking] [--duration 45] [--link https://...] [--batch 1-on-1|group]'
     );
     process.exitCode = 1;
     return;
@@ -88,6 +98,24 @@ async function main() {
   const batchType = args.batch === "group" || students.length > 1 ? "group" : "1-on-1";
   const durationMinutes = args.duration ? Number(args.duration) : 45;
 
+  // Checked before anything is created (and before the Calendar API call
+  // below) — a slug that doesn't match a real enrollment for every student
+  // would silently produce a class no teacher ever gets credited for.
+  const courseSlug = typeof args.course === "string" ? args.course.trim().toLowerCase() : null;
+  if (courseSlug) {
+    const enrolled = await Enrollment.countDocuments({
+      student: { $in: students.map((s) => s._id) },
+      courseSlug,
+      tutor: tutor._id,
+    });
+    if (enrolled !== students.length) {
+      console.error(`Not every student is enrolled in "${courseSlug}" with ${tutor.name}. Nothing was scheduled.`);
+      process.exitCode = 1;
+      await mongoose.disconnect();
+      return;
+    }
+  }
+
   let meetingLink = args.link || "";
   let googleCalendarEventId = null;
   if (!args.link) {
@@ -114,6 +142,7 @@ async function main() {
     tutor: tutor._id,
     students: students.map((s) => s._id),
     batchType,
+    courseSlug,
     scheduledAt,
     durationMinutes,
     meetingLink,

@@ -892,13 +892,28 @@ describe("PATCH /api/admin/enrollments/:id — reassign tutor (founder-hands-off
     expect(storedClass.tutor.toString()).toBe(founder._id.toString());
   });
 
-  test("missing tutorId → 400", async () => {
+  // tutorId became optional when this route grew the per-student pricing
+  // fields (Phase 4) — it's a general partial update now, not a
+  // reassign-only endpoint. A body naming no updatable field at all is
+  // still a 400, which is the case this test originally covered.
+  test("empty body → 400", async () => {
     const token = await adminToken();
     const student = await createStudent();
     const founder = await createTeacher();
     const enrollment = await createEnrollment({ student, tutor: founder });
 
     const res = await reassignReq(enrollment._id, {}, token);
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBe("Nothing to update.");
+  });
+
+  test("a tutorId that isn't a real teacher → 400 with a field error", async () => {
+    const token = await adminToken();
+    const student = await createStudent();
+    const founder = await createTeacher();
+    const enrollment = await createEnrollment({ student, tutor: founder });
+
+    const res = await reassignReq(enrollment._id, { tutorId: student._id.toString() }, token);
     expect(res.status).toBe(400);
     expect(res.body.errors.tutorId).toBeTruthy();
   });

@@ -1,12 +1,15 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import { connectDB } from "../config/db.js";
 import { env } from "../config/env.js";
 import User from "../models/User.js";
 import Enrollment from "../models/Enrollment.js";
 import Class from "../models/Class.js";
 import Assignment from "../models/Assignment.js";
+import TeacherEarning from "../models/TeacherEarning.js";
 import { ASSESSMENT_UNLOCK_AFTER_CLASSES } from "./assignmentController.js";
+import { MAX_PER_CLASS_CHARGE } from "../constants/earnings.js";
 import { validatePhoneInput, normalizePhone, EMAIL_RE, escapeHtml } from "../utils/validation.js";
 
 // Password-based, web-only login for the admin dashboard (ROADMAP.md Phase
@@ -501,7 +504,7 @@ function validateAccountType(accountType, errors) {
   return accountType;
 }
 
-// courses: [{courseSlug, tutorId}] — optional, Phase 21's multi-course Add
+// courses: [{courseSlug, tutorId, perClassCharge?, classesRemaining?}] — optional, Phase 21's multi-course Add
 // Student flow. courseSlug itself isn't checked against a fixed list here,
 // same reasoning as createEnrollment below: the taxonomy (3 languages x 4
 // sub-courses) lives in the website's data/courses.js, and the Add Student
@@ -531,7 +534,16 @@ function validateCourseSelections(courses, errors) {
 
     if (!tutorId) errors[`courses.${index}.tutorId`] = "A tutor is required for every selected course.";
 
-    return { courseSlug, tutorId };
+    // The rate is meant to be set at enrollment time, so it's accepted here
+    // as well as on the enrollment PATCH. validateMoneyFields writes into a
+    // scratch object first so its generic field names can be re-keyed to
+    // this row's position, matching how every other per-row error on this
+    // endpoint is reported.
+    const rowErrors = {};
+    const money = validateMoneyFields(entry ?? {}, rowErrors);
+    for (const [field, message] of Object.entries(rowErrors)) errors[`courses.${index}.${field}`] = message;
+
+    return { courseSlug, tutorId, ...money };
   });
 }
 
@@ -614,11 +626,26 @@ export async function createStudent(req, res) {
     // turned into the same clear 409 createEnrollment already uses rather
     // than a raw Mongo error, per Part 3.
     const enrollments = [];
-    for (const { courseSlug, tutorId } of cleanedCourses) {
+    for (const { courseSlug, tutorId, ...money } of cleanedCourses) {
       const tutor = tutorById.get(tutorId);
       try {
-        const enrollment = await Enrollment.create({ student: student._id, courseSlug, tutor: tutor._id, status: "active" });
-        enrollments.push({ _id: enrollment._id, courseSlug: enrollment.courseSlug, tutorId: tutor._id, tutorName: tutor.name });
+        // money holds only the keys the caller actually sent, so a course
+        // added without a rate stays unpriced rather than being written as 0.
+        const enrollment = await Enrollment.create({
+          student: student._id,
+          courseSlug,
+          tutor: tutor._id,
+          status: "active",
+          ...money,
+        });
+        enrollments.push({
+          _id: enrollment._id,
+          courseSlug: enrollment.courseSlug,
+          tutorId: tutor._id,
+          tutorName: tutor.name,
+          classesRemaining: enrollment.classesRemaining ?? 0,
+          perClassCharge: money.perClassCharge ?? null,
+        });
       } catch (err) {
         if (err.code === 11000) {
           res.status(409).json({
@@ -918,6 +945,96 @@ async function findTeacherOrError(tutorId, errors) {
   return tutor;
 }
 
+// The two admin-only money/accounting fields on an Enrollment, validated
+// together because they're always set together and their only real rule is
+// a relationship between them.
+//
+// perClassCharge is whole rupees. Integer-only is a correctness choice, not
+// a UI preference: it's snapshotted onto every TeacherEarning row and summed
+// across hundreds of them on the payout screens, and an integer rate keeps
+// every one of those sums exact. null is explicitly allowed and meaningful —
+// it clears the rate back to "unpriced", the legitimate state of a free or
+// trial enrollment, which the credit hook skips.
+//
+// classesRemaining is a plain non-negative integer count of sessions the
+// student already paid for off-app.
+function validateMoneyFields(body, errors) {
+  const result = {};
+
+  if (body.perClassCharge !== undefined) {
+    const raw = body.perClassCharge;
+    // "" and null both mean "unprice this enrollment" — the admin form's
+    // empty input and an explicit clear arrive as one or the other.
+    if (raw === null || raw === "") {
+      result.perClassCharge = null;
+    } else {
+      const value = Number(raw);
+      if (!Number.isInteger(value) || value <= 0) {
+        errors.perClassCharge = "Per-class rate must be a whole number of rupees above 0.";
+      } else if (value > MAX_PER_CLASS_CHARGE) {
+        errors.perClassCharge = `Per-class rate can't be above ₹${MAX_PER_CLASS_CHARGE.toLocaleString("en-IN")}.`;
+      } else {
+        result.perClassCharge = value;
+      }
+    }
+  }
+
+  if (body.classesRemaining !== undefined) {
+    const value = Number(body.classesRemaining);
+    if (!Number.isInteger(value) || value < 0) {
+      errors.classesRemaining = "Classes remaining must be a whole number, 0 or more.";
+    } else {
+      result.classesRemaining = value;
+    }
+  }
+
+  return result;
+}
+
+// A student's enrollments with the admin-only fields attached — the read
+// side of the pricing panel. Deliberately its own route rather than folded
+// into GET /api/admin/students/:id: that row shape is shared with the
+// students *list*, and widening it would put perClassCharge into a response
+// used in more places than this one page needs. Keeping the rate behind a
+// single, explicitly-requested admin route is the whole point of the
+// select: false on the field.
+export async function listEnrollments(req, res) {
+  try {
+    await connectDB();
+
+    const { studentId } = req.query;
+    if (!studentId || !mongoose.isValidObjectId(studentId)) {
+      res.status(400).json({ success: false, message: "studentId is required." });
+      return;
+    }
+
+    const enrollments = await Enrollment.find({ student: studentId })
+      .select("+perClassCharge")
+      .populate("tutor", "name")
+      .sort({ createdAt: 1 })
+      .lean();
+
+    res.json({
+      success: true,
+      enrollments: enrollments.map((e) => ({
+        _id: e._id,
+        courseSlug: e.courseSlug,
+        batchType: e.batchType,
+        status: e.status,
+        tutorId: e.tutor?._id ?? null,
+        tutorName: e.tutor?.name ?? null,
+        classesRemaining: e.classesRemaining ?? 0,
+        // undefined (a doc written before the field existed) reads back as
+        // null — "no rate set", the same state an explicit clear produces.
+        perClassCharge: e.perClassCharge ?? null,
+      })),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/enrollments failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
 // Enrolls a student in a course with a chosen tutor — upserts on
 // (student, courseSlug) rather than rejecting a duplicate outright,
 // matching createUser.js's own re-run-safe behavior: re-"enrolling" in a
@@ -937,6 +1054,12 @@ export async function createEnrollment(req, res) {
     const errors = {};
     courseSlugErrors(courseSlug, errors);
     const tutor = await findTeacherOrError(tutorId, errors);
+    // Enrollment time is when the per-student rate is meant to be set, so
+    // both fields are accepted here as well as on the PATCH below. Both stay
+    // optional: an admin who doesn't know the rate yet enrolls now and
+    // prices later, and the credit hook simply skips an unpriced enrollment
+    // until they do.
+    const money = validateMoneyFields(req.body, errors);
 
     if (Object.keys(errors).length > 0) {
       res.status(400).json({ success: false, errors });
@@ -945,13 +1068,32 @@ export async function createEnrollment(req, res) {
 
     const enrollment = await Enrollment.findOneAndUpdate(
       { student: student._id, courseSlug: courseSlug.trim().toLowerCase() },
-      { student: student._id, courseSlug: courseSlug.trim().toLowerCase(), tutor: tutor._id, status: "active" },
+      {
+        student: student._id,
+        courseSlug: courseSlug.trim().toLowerCase(),
+        tutor: tutor._id,
+        status: "active",
+        // Spread last, and only ever containing keys the caller actually
+        // sent — re-enrolling in an existing course (this is an upsert, see
+        // above) must not silently wipe a rate that's already set.
+        ...money,
+      },
       { upsert: true, returnDocument: "after" }
-    );
+    ).select("+perClassCharge"); // opt in explicitly, or the rate below reads back undefined
 
     res.status(201).json({
       success: true,
-      enrollment: { _id: enrollment._id, courseSlug: enrollment.courseSlug, tutorId: tutor._id, tutorName: tutor.name },
+      enrollment: {
+        _id: enrollment._id,
+        courseSlug: enrollment.courseSlug,
+        tutorId: tutor._id,
+        tutorName: tutor.name,
+        classesRemaining: enrollment.classesRemaining ?? 0,
+        // Read off the stored document rather than echoed from the request,
+        // so re-enrolling without sending a rate reports the rate the
+        // enrollment actually still has instead of a misleading null.
+        perClassCharge: enrollment.perClassCharge ?? null,
+      },
     });
   } catch (err) {
     console.error("POST /api/admin/students/:id/enrollments failed:", err);
@@ -959,34 +1101,78 @@ export async function createEnrollment(req, res) {
   }
 }
 
-// The handoff step — points an existing enrollment at a different tutor.
-// Doesn't touch Class/Assignment history at all: GET /api/classes already
-// shows a student every class they've had regardless of which tutor taught
-// it, so past classes and the newly-assigned tutor's future ones just show
-// up together, in order (same guarantee scripts/assignTutor.js documents).
-export async function reassignEnrollmentTutor(req, res) {
+// Partial update of one enrollment — the tutor handoff step, plus the
+// per-student rate and remaining-class count.
+//
+// Tutor reassignment doesn't touch Class/Assignment history at all: GET
+// /api/classes already shows a student every class they've had regardless
+// of which tutor taught it, so past classes and the newly-assigned tutor's
+// future ones just show up together, in order (same guarantee
+// scripts/assignTutor.js documents). It doesn't touch TeacherEarning history
+// either, for the same reason and a stronger one — those rows are settled
+// payout records for work someone already did, so they stay with the teacher
+// who earned them.
+//
+// Every field is optional and only what's present in the body is written,
+// so the existing { tutorId } call from the dashboard's reassign control
+// behaves exactly as it did before pricing existed.
+export async function updateEnrollment(req, res) {
   try {
     await connectDB();
 
-    const enrollment = await Enrollment.findById(req.params.id);
+    const enrollment = await Enrollment.findById(req.params.id).select("+perClassCharge");
     if (!enrollment) {
       res.status(404).json({ success: false, message: "Enrollment not found." });
       return;
     }
 
+    // Every field is optional individually, but a body naming none of them
+    // is a caller bug, not a no-op worth answering 200 to — the pre-pricing
+    // version of this route rejected exactly that case (as a missing
+    // tutorId) and it stays rejected now that there are three ways to
+    // satisfy it.
+    const UPDATABLE = ["tutorId", "perClassCharge", "classesRemaining"];
+    if (!UPDATABLE.some((field) => req.body[field] !== undefined)) {
+      res.status(400).json({ success: false, message: "Nothing to update." });
+      return;
+    }
+
     const errors = {};
-    const tutor = await findTeacherOrError(req.body.tutorId, errors);
+    const tutor = req.body.tutorId !== undefined ? await findTeacherOrError(req.body.tutorId, errors) : null;
+    const money = validateMoneyFields(req.body, errors);
+
     if (Object.keys(errors).length > 0) {
       res.status(400).json({ success: false, errors });
       return;
     }
 
-    enrollment.tutor = tutor._id;
+    if (tutor) enrollment.tutor = tutor._id;
+    if (money.perClassCharge !== undefined) enrollment.perClassCharge = money.perClassCharge;
+    if (money.classesRemaining !== undefined) enrollment.classesRemaining = money.classesRemaining;
     await enrollment.save();
+
+    // Not a validation error, deliberately. Sessions with no rate is a real
+    // state (a comped or trial package), so blocking it would be wrong —
+    // but it's also the state where a teacher silently earns nothing for
+    // every class they teach against it, which an admin should be told
+    // about rather than discover on a payout run. The dashboard renders
+    // this as an inline warning next to the row.
+    const warning =
+      enrollment.classesRemaining > 0 && !enrollment.perClassCharge
+        ? "This enrollment has classes remaining but no per-class rate, so its teacher earns nothing for them."
+        : null;
 
     res.json({
       success: true,
-      enrollment: { _id: enrollment._id, courseSlug: enrollment.courseSlug, tutorId: tutor._id, tutorName: tutor.name },
+      warning,
+      enrollment: {
+        _id: enrollment._id,
+        courseSlug: enrollment.courseSlug,
+        tutorId: enrollment.tutor,
+        tutorName: tutor ? tutor.name : undefined,
+        classesRemaining: enrollment.classesRemaining ?? 0,
+        perClassCharge: enrollment.perClassCharge ?? null,
+      },
     });
   } catch (err) {
     console.error("PATCH /api/admin/enrollments/:id failed:", err);
@@ -1015,6 +1201,166 @@ export async function deleteEnrollment(req, res) {
     res.json({ success: true });
   } catch (err) {
     console.error("DELETE /api/admin/enrollments/:id failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Cross-teacher payout view. Two shapes in one response because the page
+// needs both at once: `teachers` is the per-teacher roll-up the table
+// renders, `entries` is the ledger itself for the expanded row / CSV export.
+//
+// Both totals come straight from TeacherEarning rather than a cached
+// counter on User. The ledger is the only record of what was actually
+// earned, so deriving from it means the number on the payout screen and the
+// rows it's a sum of can never disagree — there's no second copy to drift,
+// and no reconcile step to remember to run. At this scale (tens of teachers)
+// it's one indexed $group.
+//
+// ?teacherId= and ?status= narrow the entry list only; the roll-up stays
+// across every teacher so the page header totals don't move when a filter
+// is applied.
+export async function listEarnings(req, res) {
+  try {
+    await connectDB();
+
+    const { teacherId, status } = req.query;
+    if (status !== undefined && status !== "pending" && status !== "paid") {
+      res.status(400).json({ success: false, message: 'status must be "pending" or "paid".' });
+      return;
+    }
+
+    if (teacherId !== undefined && !mongoose.isValidObjectId(teacherId)) {
+      res.status(400).json({ success: false, message: "Invalid teacherId." });
+      return;
+    }
+
+    const entryFilter = {};
+    if (teacherId) entryFilter.teacher = teacherId;
+    if (status) entryFilter.status = status;
+
+    const [totals, entries, teachers] = await Promise.all([
+      TeacherEarning.aggregate([
+        { $group: { _id: { teacher: "$teacher", status: "$status" }, points: { $sum: "$points" }, count: { $sum: 1 } } },
+      ]),
+      TeacherEarning.find(entryFilter)
+        .sort({ createdAt: -1 })
+        // Hard cap rather than true pagination: this is a founder-scale
+        // dashboard, and a bounded response is what keeps the page honest
+        // about it. The roll-up above is unbounded and always exact, so the
+        // totals stay right even when the entry list is truncated.
+        .limit(500)
+        .populate("teacher", "name")
+        .populate("student", "name")
+        .lean(),
+      User.find({ role: "teacher" }).select("name isActive").sort({ name: 1 }).lean(),
+    ]);
+
+    const byTeacher = new Map(
+      teachers.map((t) => [
+        t._id.toString(),
+        { _id: t._id, name: t.name, isActive: t.isActive !== false, pointsPending: 0, pointsPaid: 0, entryCount: 0 },
+      ])
+    );
+
+    for (const row of totals) {
+      const teacher = byTeacher.get(row._id.teacher.toString());
+      // A teacher whose account was hard-deleted still has ledger rows;
+      // skipping them here keeps the roll-up aligned with the teacher list
+      // the table renders, and the entries below still carry the history.
+      if (!teacher) continue;
+      if (row._id.status === "paid") teacher.pointsPaid = row.points;
+      else teacher.pointsPending = row.points;
+      teacher.entryCount += row.count;
+    }
+
+    res.json({
+      success: true,
+      teachers: [...byTeacher.values()].map((t) => ({ ...t, pointsLifetime: t.pointsPending + t.pointsPaid })),
+      entries: entries.map(buildEarningRow),
+    });
+  } catch (err) {
+    console.error("GET /api/admin/earnings failed:", err);
+    res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
+  }
+}
+
+// Shared row shape for the admin entry list and the CSV the dashboard
+// builds from it, so the two can't drift.
+function buildEarningRow(e) {
+  return {
+    _id: e._id,
+    teacherId: e.teacher?._id ?? e.teacher,
+    teacherName: e.teacher?.name ?? null,
+    studentName: e.student?.name ?? null,
+    courseSlug: e.courseSlug,
+    classId: e.classId,
+    chargedAmount: e.chargedAmount,
+    points: e.points,
+    status: e.status,
+    paidAt: e.paidAt,
+    createdAt: e.createdAt,
+  };
+}
+
+const MAX_SETTLE_BATCH = 500;
+
+// Marks a batch of ledger rows paid — the payout actually happens off-app
+// (bank transfer/UPI), this records that it did.
+//
+// Idempotent by construction: the filter includes status "pending", so
+// re-sending the same entryIds (a double-click, a retried request, two
+// admins settling the same batch at once) matches zero documents the second
+// time and settles nothing twice. `settled` is what the update really
+// changed, not what was asked for, so the caller sees the difference.
+//
+// There is no counter to move and no sum to recompute — pending and paid
+// totals are derived from these rows, so flipping status is the entire
+// operation and it can't leave two numbers disagreeing. teacherId is
+// required and part of the filter: it scopes the write so a stray id from
+// another teacher's list can't be settled into this batch by accident.
+export async function settleEarnings(req, res) {
+  try {
+    await connectDB();
+
+    const { teacherId, entryIds } = req.body;
+    // Shape-checked here rather than left to Mongoose's cast error, so a
+    // malformed id is a clean 400 instead of a 500 out of the $match below.
+    if (!teacherId || typeof teacherId !== "string" || !mongoose.isValidObjectId(teacherId)) {
+      res.status(400).json({ success: false, message: "teacherId is required." });
+      return;
+    }
+    if (Array.isArray(entryIds) && entryIds.some((id) => !mongoose.isValidObjectId(id))) {
+      res.status(400).json({ success: false, message: "One or more selected entries are invalid." });
+      return;
+    }
+    if (!Array.isArray(entryIds) || entryIds.length === 0) {
+      res.status(400).json({ success: false, message: "Select at least one entry to settle." });
+      return;
+    }
+    if (entryIds.length > MAX_SETTLE_BATCH) {
+      res.status(400).json({ success: false, message: `Settle at most ${MAX_SETTLE_BATCH} entries at a time.` });
+      return;
+    }
+
+    const paidAt = new Date();
+    const result = await TeacherEarning.updateMany(
+      { _id: { $in: entryIds }, teacher: teacherId, status: "pending" },
+      { $set: { status: "paid", paidAt } }
+    );
+
+    // Recomputed after the write, from the ledger, so the response carries
+    // the teacher's real post-settlement position rather than an arithmetic
+    // guess the client would then have to trust.
+    const totals = await TeacherEarning.aggregate([
+      { $match: { teacher: new mongoose.Types.ObjectId(teacherId) } },
+      { $group: { _id: "$status", points: { $sum: "$points" } } },
+    ]);
+    const pointsPaid = totals.find((t) => t._id === "paid")?.points ?? 0;
+    const pointsPending = totals.find((t) => t._id === "pending")?.points ?? 0;
+
+    res.json({ success: true, settled: result.modifiedCount, paidAt, pointsPending, pointsPaid });
+  } catch (err) {
+    console.error("PATCH /api/admin/earnings/settle failed:", err);
     res.status(500).json({ success: false, message: "Something went wrong. Please try again." });
   }
 }

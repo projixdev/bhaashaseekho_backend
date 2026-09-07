@@ -46,8 +46,22 @@ export async function createTeacher(overrides = {}) {
   return User.create(buildUserDoc({ n, ...overrides, role: "teacher", defaultEmail: `teacher${n}@example.com` }));
 }
 
-export async function createEnrollment({ student, tutor, courseSlug = "kannada", batchType = "1-on-1" }) {
-  return Enrollment.create({ student: student._id, tutor: tutor?._id ?? null, courseSlug, batchType });
+// perClassCharge/classesRemaining default to undefined so an enrollment
+// seeded without them is genuinely unpriced — the legacy/free-enrollment
+// state the credit hook is supposed to skip — rather than silently priced
+// at 0, which would be a different case entirely.
+export async function createEnrollment({
+  student,
+  tutor,
+  courseSlug = "kannada",
+  batchType = "1-on-1",
+  perClassCharge,
+  classesRemaining,
+}) {
+  const doc = { student: student._id, tutor: tutor?._id ?? null, courseSlug, batchType };
+  if (perClassCharge !== undefined) doc.perClassCharge = perClassCharge;
+  if (classesRemaining !== undefined) doc.classesRemaining = classesRemaining;
+  return Enrollment.create(doc);
 }
 
 // attendance: [{ studentId, status }] — pass this to seed a class straight
@@ -60,6 +74,7 @@ export async function createClass({
   scheduledAt,
   status = "upcoming",
   subject = "Kannada",
+  courseSlug,
   durationMinutes,
   attendance,
   meetingLink,
@@ -67,6 +82,10 @@ export async function createClass({
 }) {
   return Class.create({
     subject,
+    // Left unset by default so existing tests keep exercising the legacy
+    // "class with no course attribution" path; pass it explicitly when a
+    // test cares which enrollment a class charges against.
+    courseSlug,
     tutor: tutor._id,
     students: students.map((s) => s._id),
     scheduledAt,

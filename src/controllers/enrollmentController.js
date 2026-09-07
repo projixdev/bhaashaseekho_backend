@@ -15,11 +15,21 @@ export async function getMyEnrollments(req, res) {
       .sort({ createdAt: 1 })
       .lean();
 
+    // Explicit whitelist, not a spread of the document. This is the one
+    // student-facing view of an Enrollment, and Enrollment carries an
+    // admin-only rate (perClassCharge) that must never reach a student under
+    // any field name — building the response field by field means adding a
+    // column to the model can't leak it here by default. perClassCharge is
+    // additionally select: false, so it isn't even on `e` to be copied.
     const result = enrollments.map((e) => ({
       courseSlug: e.courseSlug,
       batchType: e.batchType,
       status: e.status,
       tutor: e.tutor ? { name: e.tutor.name } : null,
+      // Plain count of sessions already paid for off-app and not yet
+      // attended. A number, never a rupee figure and never convertible to
+      // one from anything else in this response.
+      classesRemaining: e.classesRemaining ?? 0,
     }));
 
     res.json({ success: true, enrollments: result });

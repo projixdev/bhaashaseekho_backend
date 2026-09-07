@@ -19,7 +19,7 @@ test("returns the student's own enrollments with tutor name", async () => {
 
   expect(res.status).toBe(200);
   expect(res.body.enrollments).toEqual([
-    { courseSlug: "kannada", batchType: "1-on-1", status: "active", tutor: { name: "Sudi" } },
+    { courseSlug: "kannada", batchType: "1-on-1", status: "active", tutor: { name: "Sudi" }, classesRemaining: 0 },
   ]);
 });
 

@@ -6,6 +6,18 @@ const ClassSchema = new mongoose.Schema(
     tutor: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     students: [{ type: mongoose.Schema.Types.ObjectId, ref: "User", required: true }],
     batchType: { type: String, enum: ["1-on-1", "group"], default: "1-on-1" },
+    // Which Enrollment this class is actually for. `subject` above is free
+    // text a teacher can retitle at will ("Revision — past tense"), so it
+    // can't identify a course; and a student may hold two enrollments with
+    // the same tutor, so (student, tutor) can't either. That ambiguity is
+    // harmless for scheduling but not for money — classController.endClass
+    // resolves (student, courseSlug) to exactly one Enrollment via that
+    // pair's unique index before charging anything against it.
+    //
+    // null on classes created before this field existed. endClass falls back
+    // to the student's single enrollment with this tutor for those, and
+    // skips crediting entirely when that's ambiguous rather than guessing.
+    courseSlug: { type: String, trim: true, lowercase: true, default: null },
     scheduledAt: { type: Date, required: true },
     durationMinutes: { type: Number, default: 45 },
     // Zoom/Google Meet link — classes run on those platforms already, no
