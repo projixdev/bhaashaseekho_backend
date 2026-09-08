@@ -222,7 +222,7 @@ describe("PATCH /api/classes/:id/status — immediate cancel/postpone notificati
     expect(emailedTo).not.toContain(stu3.email);
   });
 
-  test("a recipient with notificationsEnabled: false is excluded from the push, but still gets the email", async () => {
+  test("a recipient with notificationsEnabled: false is excluded from both the push and the email", async () => {
     const teacher1 = await createTeacher();
     const stu1 = await createStudent();
     await createEnrollment({ student: stu1, tutor: teacher1 });
@@ -241,7 +241,8 @@ describe("PATCH /api/classes/:id/status — immediate cancel/postpone notificati
     expect(pushedTokens).toEqual(["tutor-token"]);
 
     const emailedTo = sendTransactionalEmail.mock.calls.map((c) => c[0].to);
-    expect(emailedTo).toContain(stu1.email);
+    expect(emailedTo).toContain(teacher1.email);
+    expect(emailedTo).not.toContain(stu1.email);
   });
 
   test("postpone with a new scheduledAt → email/push copy includes the new time, class.scheduledAt updates", async () => {

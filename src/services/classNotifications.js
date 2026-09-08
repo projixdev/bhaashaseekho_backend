@@ -10,7 +10,10 @@ import { formatDateTimeInZone } from "../utils/timezone.js";
 // the same module (see that file's comment for the reproduction). Deferring
 // both imports to call time sidesteps it without touching any working file.
 async function sendEmails(entries) {
-  const withEmail = entries.filter(({ user }) => user.email);
+  // notificationsEnabled !== false matches the push filter below — a user
+  // who turned notifications off shouldn't still get emailed just because
+  // email and push are two independent delivery channels for the same event.
+  const withEmail = entries.filter(({ user }) => user.email && user.notificationsEnabled !== false);
   if (withEmail.length === 0) return;
 
   const [{ sendTransactionalEmail }, { renderEmailLayout }] = await Promise.all([
