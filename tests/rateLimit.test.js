@@ -1,13 +1,18 @@
 // Dedicated file, deliberately isolated from auth.test.js: the rate limiter
-// (5 requests / 10 min per IP, middleware/rateLimit.js) and the per-user
-// otpAttempts exhaustion check (utils/otp.js MAX_OTP_ATTEMPTS, also 5) sit on
-// the exact same verify-otp route and hit their threshold on the exact same
-// 6th call. Tested from one fixed IP, the rate limiter always fires first —
-// so this file reuses one IP on purpose to prove the limiter itself works,
+// (middleware/rateLimit.js) and the per-user otpAttempts exhaustion check
+// (utils/otp.js MAX_OTP_ATTEMPTS, still 5) sit on the exact same verify-otp
+// route. Tested from one fixed IP, the rate limiter always fires first — so
+// this file reuses one IP on purpose to prove the limiter itself works,
 // while roleIsolation/auth tests deliberately vary IP per call to avoid
 // tripping it by accident. otpAttempts exhaustion (a distinct, per-user
 // control that still matters against an attacker spread across many IPs) is
 // covered separately below by varying the IP so the limiter never masks it.
+//
+// auth-send-otp/auth-verify-otp are temporarily bumped to 15/10min for the
+// closed-testing period (see authRoutes.js) — the two tests below assert
+// against that current, temporary number, not the middleware's own 5/10min
+// default (which other rate-limited routes, e.g. leads/contact, still use
+// unchanged). Revert these back to 5 alongside authRoutes.js's own revert.
 import { jest } from "@jest/globals";
 import request from "supertest";
 import { connectTestDB, clearTestDB, disconnectTestDB } from "./helpers/db.js";
@@ -24,11 +29,11 @@ beforeAll(connectTestDB);
 afterEach(clearTestDB);
 afterAll(disconnectTestDB);
 
-test("auth-send-otp: 6th request from the same IP within the window → 429", async () => {
+test("auth-send-otp: 16th request from the same IP within the window → 429", async () => {
   const student = await createStudent();
   const ip = nextIp();
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 15; i++) {
     const res = await request(app).post("/api/auth/send-otp").set("X-Forwarded-For", ip).send({ phone: student.phone });
     expect(res.status).not.toBe(429);
   }
@@ -38,10 +43,10 @@ test("auth-send-otp: 6th request from the same IP within the window → 429", as
   expect(blocked.body.message).toBe("Too many requests. Please try again later.");
 });
 
-test("auth-verify-otp: 6th request from the same IP within the window → 429", async () => {
+test("auth-verify-otp: 16th request from the same IP within the window → 429", async () => {
   const ip = nextIp();
 
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 15; i++) {
     const res = await request(app)
       .post("/api/auth/verify-otp")
       .set("X-Forwarded-For", ip)

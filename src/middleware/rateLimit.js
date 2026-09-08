@@ -33,13 +33,17 @@ function getClientIp(req) {
 // `skip(req)` lets a specific route exempt a specific request from this
 // route's bucket entirely (used by authRoutes.js for the reviewer bypass) --
 // generic here on purpose, this file has no reviewer-specific knowledge.
-export function rateLimit(prefix, { skip } = {}) {
+// `limit`/`windowMs` let a specific route override checkRateLimit's default
+// threshold (used by authRoutes.js for the temporary closed-testing bump) --
+// left undefined here, they just fall through to checkRateLimit's own
+// defaults, so every other caller is unaffected.
+export function rateLimit(prefix, { skip, limit, windowMs } = {}) {
   return function rateLimitMiddleware(req, res, next) {
     if (skip && skip(req)) {
       next();
       return;
     }
-    const { allowed } = checkRateLimit(`${prefix}:${getClientIp(req)}`);
+    const { allowed } = checkRateLimit(`${prefix}:${getClientIp(req)}`, { limit, windowMs });
     if (!allowed) {
       res.status(429).json({ success: false, message: "Too many requests. Please try again later." });
       return;
