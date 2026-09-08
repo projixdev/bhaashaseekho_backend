@@ -214,6 +214,35 @@ describe("POST /api/messages/conversations/:otherUserId", () => {
     expect(await Message.countDocuments()).toBe(2);
   });
 
+  test("push notification body is generic — the actual message text never leaves the server in the push payload", async () => {
+    const { jest } = await import("@jest/globals");
+    const { default: User } = await import("../src/models/User.js");
+    const teacher = await createTeacher({ name: "Sudi Shetty" });
+    const student = await createStudent();
+    await createEnrollment({ student, tutor: teacher });
+    await User.findByIdAndUpdate(student._id, { pushToken: "stu-token" });
+
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
+
+    await request(app)
+      .post(`/api/messages/conversations/${student._id}`)
+      .set("Authorization", `Bearer ${signToken(teacher)}`)
+      .send({ text: "Meet me at the usual link, my phone number is 9999999999" });
+
+    const pushed = JSON.parse(fetchMock.mock.calls[0][1].body)[0];
+    expect(pushed.to).toBe("stu-token");
+    // A push body/title is what a locked iOS device shows by default — the
+    // actual message text must never appear there. It's not carried in
+    // `data` either: the app has no notification-tap listener today, so
+    // there's no present need to route it through push infrastructure at
+    // all (it's already fetchable via the normal conversation history call).
+    expect(pushed.body).toBe("New message from Sudi Shetty");
+    expect(pushed.body).not.toMatch(/9999999999|usual link/);
+    expect(pushed.title).toBe("Sudi Shetty");
+    expect(pushed.data).toEqual({ type: "new-message", otherUserId: teacher._id.toString() });
+    fetchMock.mockRestore();
+  });
+
   test("a recipient with notificationsEnabled: false never gets a push, even with a pushToken", async () => {
     const { jest } = await import("@jest/globals");
     const { default: User } = await import("../src/models/User.js");

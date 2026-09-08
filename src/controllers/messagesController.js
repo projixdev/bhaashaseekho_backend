@@ -189,9 +189,17 @@ export async function sendMessage(req, res) {
       User.findById(recipientId).select("pushToken notificationsEnabled").lean(),
     ]);
     if (recipient?.pushToken && recipient.notificationsEnabled !== false) {
+      // Body stays generic — the raw message text used to go here, but a
+      // push body/title is what iOS shows on the lock screen by default, so
+      // a private message shouldn't be readable without unlocking the
+      // phone. Not added to `data` either: nothing in the app currently
+      // reads a notification's data payload (no tap/deep-link listener
+      // exists yet), so there's no present need to carry the text through
+      // push infrastructure at all — the app already has it via the normal
+      // GET /api/messages/conversations/:otherUserId fetch once opened.
       await sendPushNotifications([recipient.pushToken], {
         title: sender?.name || "New message",
-        body: trimmedText,
+        body: `New message from ${sender?.name || "someone"}`,
         data: { type: "new-message", otherUserId: req.user.id },
       });
     } else {

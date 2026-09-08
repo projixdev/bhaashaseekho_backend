@@ -94,10 +94,17 @@ export async function notifyAssignmentReviewed(assignment) {
     if (!recipients?.student) return;
     const { student } = recipients;
 
+    // Body stays generic on purpose — a push body/title is what iOS shows on
+    // the lock screen by default (no unlock required), so the actual score
+    // only goes in `data`, which the OS never renders. The app doesn't
+    // currently read this data payload for anything (no notification-tap
+    // listener exists yet), but it's kept here for whenever deep-linking
+    // straight to the result is built, rather than needing a second
+    // round-trip to fetch the score after the tap.
     await pushTo(student, {
       title: "Your submission was reviewed",
-      body: `"${assignment.title}" has been reviewed — score: ${assignment.score}.`,
-      data: { assignmentId: assignment._id.toString(), type: "assignment-reviewed" },
+      body: "Your submission was reviewed — tap to see your score.",
+      data: { assignmentId: assignment._id.toString(), type: "assignment-reviewed", score: assignment.score },
     });
 
     await emailTo(student, {

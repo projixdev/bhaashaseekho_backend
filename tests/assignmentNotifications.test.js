@@ -148,7 +148,7 @@ describe("POST /api/assignments/:id/submit — uploaded by student", () => {
 });
 
 describe("PATCH /api/assignments/:id/review — reviewed/scored", () => {
-  test("student gets push + email with the score", async () => {
+  test("student gets a push with a generic body (score kept out of the lock-screen-visible text) + email with the score", async () => {
     const teacher = await createTeacher();
     const student = await createStudent();
     await createEnrollment({ student, tutor: teacher });
@@ -165,7 +165,13 @@ describe("PATCH /api/assignments/:id/review — reviewed/scored", () => {
     expect(res.status).toBe(200);
     const pushedBody = JSON.parse(fetchMock.mock.calls[0][1].body)[0];
     expect(pushedBody.to).toBe("student-token");
-    expect(pushedBody.body).toMatch(/9\/10/);
+    // The score must never appear in the push body/title — that's what a
+    // locked iOS device shows by default. It's carried in `data` instead,
+    // which the OS doesn't render, for the app to read once actually opened.
+    expect(pushedBody.body).toBe("Your submission was reviewed — tap to see your score.");
+    expect(pushedBody.body).not.toMatch(/9\/10/);
+    expect(pushedBody.title).not.toMatch(/9\/10/);
+    expect(pushedBody.data.score).toBe("9/10");
 
     expect(sendTransactionalEmail).toHaveBeenCalledTimes(1);
     expect(sendTransactionalEmail.mock.calls[0][0].to).toBe(student.email);
