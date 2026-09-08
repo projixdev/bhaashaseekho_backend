@@ -189,3 +189,46 @@ describe("reviewer bypass (Play Store review)", () => {
     expect(res.body.user.id).toBe(student._id.toString());
   });
 });
+
+describe("reviewer bypass — multiple phones sharing one OTP (Play Store student demo + App Store teacher demo)", () => {
+  const STUDENT_PHONE = "9812345671";
+  const TEACHER_PHONE = "9812345672";
+  const SHARED_OTP = "482913";
+  let originalPhone, originalOtp;
+
+  beforeAll(() => {
+    originalPhone = process.env.REVIEWER_TEST_PHONE;
+    originalOtp = process.env.REVIEWER_TEST_OTP;
+    process.env.REVIEWER_TEST_PHONE = `${STUDENT_PHONE},${TEACHER_PHONE}`;
+    process.env.REVIEWER_TEST_OTP = SHARED_OTP;
+  });
+
+  afterAll(() => {
+    if (originalPhone === undefined) delete process.env.REVIEWER_TEST_PHONE;
+    else process.env.REVIEWER_TEST_PHONE = originalPhone;
+    if (originalOtp === undefined) delete process.env.REVIEWER_TEST_OTP;
+    else process.env.REVIEWER_TEST_OTP = originalOtp;
+  });
+
+  test("both configured phones sign in with the same shared OTP, each keeping their own real role", async () => {
+    await createStudent({ phone: STUDENT_PHONE, name: "Play Store Reviewer" });
+    await createTeacher({ phone: TEACHER_PHONE, name: "Apple Teacher Testing" });
+
+    const studentRes = await verifyOtp(STUDENT_PHONE, SHARED_OTP);
+    expect(studentRes.status).toBe(200);
+    expect(studentRes.body.user.role).toBe("student");
+    expect(studentRes.body.user.phone).toBe(STUDENT_PHONE);
+
+    const teacherRes = await verifyOtp(TEACHER_PHONE, SHARED_OTP);
+    expect(teacherRes.status).toBe(200);
+    expect(teacherRes.body.user.role).toBe("teacher");
+    expect(teacherRes.body.user.phone).toBe(TEACHER_PHONE);
+  });
+
+  test("a phone not in the configured list never gets the bypass, even with the correct shared OTP", async () => {
+    const other = await createStudent();
+    const res = await verifyOtp(other.phone, SHARED_OTP);
+    expect(res.status).not.toBe(200);
+    expect(res.body.success).toBe(false);
+  });
+});

@@ -43,14 +43,33 @@ export const env = {
 
   whatsappNumber: process.env.WHATSAPP_NUMBER,
 
-  // Google Play Store reviewer test-login bypass (see authController.js's
-  // isReviewerPhone/sendOtp/verifyOtp). Optional -- both must be set
-  // together for the bypass to ever activate; the app works fine with
-  // neither configured. Getters (not plain assignments) so tests can set
-  // process.env.REVIEWER_TEST_PHONE/OTP per-describe-block and have it take
-  // effect immediately, same as they'd behave in a real deploy.
+  // App store reviewer / demo-account test-login bypass (see
+  // authController.js's isReviewerPhone/sendOtp/verifyOtp). Optional -- both
+  // must be set together for the bypass to ever activate; the app works
+  // fine with neither configured. Getters (not plain assignments) so tests
+  // can set process.env.REVIEWER_TEST_PHONE/OTP per-describe-block and have
+  // it take effect immediately, same as they'd behave in a real deploy.
+  //
+  // REVIEWER_TEST_PHONE holds one or more phone numbers, comma-separated
+  // (e.g. "8147777707,9876512340") -- every listed number shares the one
+  // REVIEWER_TEST_OTP. This is how a Play Store reviewer's student demo
+  // account and an Apple reviewer's teacher demo account can both sign in
+  // with the same fixed code without needing a second OTP var per account.
+  // isReviewerPhone doesn't care which role a given phone's real User
+  // document is -- verifyOtp's bypass branch already reads role off that
+  // document rather than assuming "student", so adding a teacher number
+  // here needs no other code change, only the User document to exist.
   get reviewerTestPhone() {
-    return process.env.REVIEWER_TEST_PHONE || "";
+    // Singular, first-listed number -- unchanged shape for
+    // scripts/seedReviewerAccount.js and anything else expecting exactly
+    // one primary reviewer phone rather than the full list.
+    return this.reviewerTestPhones[0] || "";
+  },
+  get reviewerTestPhones() {
+    return (process.env.REVIEWER_TEST_PHONE || "")
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
   },
   get reviewerTestOtp() {
     return process.env.REVIEWER_TEST_OTP || "";

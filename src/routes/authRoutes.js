@@ -5,10 +5,11 @@ import { normalizePhone } from "../utils/validation.js";
 
 const router = Router();
 
-// REVIEWER BYPASS — Play Store review only, do not remove without checking
-// Play Console sign-in requirements. Exempts only the configured reviewer
-// number from these two routes' rate limit so repeated review logins never
-// hit 429; every other phone number keeps the normal 5-per-10min limit.
+// REVIEWER BYPASS — do not remove without checking Play Console and App
+// Store Connect sign-in requirements. Exempts every configured reviewer/demo
+// number (isReviewerPhone checks a list, see env.js) from these two routes'
+// rate limit so repeated review logins never hit 429; every other phone
+// number keeps the normal limit.
 const skipForReviewer = (req) => isReviewerPhone(normalizePhone(req.body?.phone));
 
 // TEMPORARY, closed-testing period only: bumped from the default 5/10min to

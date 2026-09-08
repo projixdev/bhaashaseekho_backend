@@ -23,8 +23,10 @@ export function verifyOtpHash(phone, otp, expectedHash) {
   return crypto.timingSafeEqual(actualHash, expected);
 }
 
-// Constant-time comparison for the Play Store reviewer bypass (see
-// authController.js). Not a hash like verifyOtpHash -- REVIEWER_TEST_OTP is
+// Constant-time comparison for the reviewer/demo-account bypass (see
+// authController.js — covers both Play Store and App Store review
+// accounts, one shared OTP for every configured phone). Not a hash like
+// verifyOtpHash -- REVIEWER_TEST_OTP is
 // a fixed, operator-configured value -- but still worth comparing without a
 // timing side-channel, since it's a real (if narrowly-scoped) login
 // credential once configured.

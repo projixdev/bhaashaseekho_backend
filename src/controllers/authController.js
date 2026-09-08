@@ -10,14 +10,18 @@ import { validatePhoneInput, validateOtpInput, normalizePhone } from "../utils/v
 import { currentMonthKey } from "../utils/sessionMonth.js";
 import { normalizeTimezone } from "../utils/timezone.js";
 
-// REVIEWER BYPASS — Play Store review only, do not remove without checking
-// Play Console sign-in requirements. Single source of truth for "is this
-// the configured reviewer phone" -- used below by sendOtp/verifyOtp and by
-// authRoutes.js's rate-limit exemption, so there's exactly one place that
-// knows this comparison. Always false if REVIEWER_TEST_PHONE isn't set --
-// a real user's phone can never collide with an empty string.
+// REVIEWER BYPASS — app store review / demo accounts, do not remove without
+// checking Play Console and App Store Connect sign-in requirements first.
+// Single source of truth for "is this one of the configured reviewer
+// phones" -- used below by sendOtp/verifyOtp and by authRoutes.js's
+// rate-limit exemption, so there's exactly one place that knows this
+// comparison. REVIEWER_TEST_PHONE can list more than one number
+// (comma-separated, see env.js) sharing the one REVIEWER_TEST_OTP -- e.g. a
+// student demo account for Play Store review and a teacher demo account
+// for Apple review at the same time. Always false if none are configured
+// -- a real user's phone can never collide with an empty list.
 export function isReviewerPhone(phone) {
-  return Boolean(env.reviewerTestPhone) && phone === normalizePhone(env.reviewerTestPhone);
+  return env.reviewerTestPhones.some((p) => phone === normalizePhone(p));
 }
 
 // sessionId is required (not optional/defaulted here) — the caller must
@@ -95,10 +99,10 @@ export async function sendOtp(req, res) {
 
     const phone = normalizePhone(req.body.phone);
 
-    // REVIEWER BYPASS — Play Store review only, do not remove without
-    // checking Play Console sign-in requirements. Runs before connectDB and
-    // before any real OTP is generated -- no email is ever attempted for
-    // this number.
+    // REVIEWER BYPASS — do not remove without checking Play Console and App
+    // Store Connect sign-in requirements. Runs before connectDB and before
+    // any real OTP is generated -- no email is ever attempted for this
+    // number, regardless of which reviewer/demo account it is.
     if (isReviewerPhone(phone)) {
       res.json({ success: true, email: "r***@bhaashaseekho.com" });
       return;
@@ -186,14 +190,17 @@ export async function verifyOtp(req, res) {
     const otp = req.body.otp.trim();
     const forceLogout = req.body.forceLogout === true;
 
-    // REVIEWER BYPASS — Play Store review only, do not remove without
-    // checking Play Console sign-in requirements. Requires an exact phone
-    // AND OTP match (constant-time on the OTP) -- a phone match with the
-    // wrong code falls straight through to the real flow below, which 400s
-    // exactly like any other account with no live OTP issued (this
-    // account's otpHash is never set through the real send-otp path, see
-    // sendOtp's own bypass above). Always mints a fresh session, skipping
-    // the already-logged-in-elsewhere check, so repeated review logins from
+    // REVIEWER BYPASS — do not remove without checking Play Console and App
+    // Store Connect sign-in requirements. Requires an exact phone AND OTP
+    // match (constant-time on the OTP) -- a phone match with the wrong code
+    // falls straight through to the real flow below, which 400s exactly
+    // like any other account with no live OTP issued (this account's
+    // otpHash is never set through the real send-otp path, see sendOtp's
+    // own bypass above). role below comes from the real User document, not
+    // a hardcoded assumption -- a teacher demo account logs in as a
+    // teacher, a student one as a student, same bypass either way. Always
+    // mints a fresh session, skipping the already-logged-in-elsewhere
+    // check, so repeated review logins from
     // different test devices never hit device-takeover friction.
     if (isReviewerPhone(phone) && env.reviewerTestOtp && verifyReviewerOtp(otp, env.reviewerTestOtp)) {
       await connectDB();
