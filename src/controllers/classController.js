@@ -24,8 +24,10 @@ export async function listUpcomingClasses(req, res) {
     const filter =
       req.user.role === "teacher" ? { tutor: req.user.id } : { students: req.user.id };
 
+    const now = new Date();
     const { from, to } = req.query;
-    if (from && to) {
+    const isDateRangeQuery = Boolean(from && to);
+    if (isDateRangeQuery) {
       const parsedFrom = new Date(from);
       const parsedTo = new Date(to);
       if (Number.isNaN(parsedFrom.getTime()) || Number.isNaN(parsedTo.getTime())) {
@@ -44,7 +46,7 @@ export async function listUpcomingClasses(req, res) {
       // class whose time has passed but the tutor hasn't ended yet would
       // otherwise still show as their "next" class. "live" is exempt since
       // it can legitimately be a few minutes past scheduledAt.
-      filter.$or = [{ status: "live" }, { status: "upcoming", scheduledAt: { $gte: new Date() } }];
+      filter.$or = [{ status: "live" }, { status: "upcoming", scheduledAt: { $gte: now } }];
     }
 
     const classes = await Class.find(filter)
@@ -52,6 +54,26 @@ export async function listUpcomingClasses(req, res) {
       .populate("tutor", "name phone")
       .populate("students", "name phone")
       .lean();
+
+    // The from/to (date-range) branch above deliberately returns every
+    // status in the window, unfiltered by time — the teacher's WeekCalendar
+    // grid needs that to render a past-due/cancelled/postponed block with
+    // its own styling instead of just hiding it. But that same unfiltered
+    // response also feeds the student Home screen's week-strip dots, which
+    // have no business rule of their own and were showing a dot for a class
+    // this exact same student's own Classes-tab list (the branch above, no
+    // from/to) would never show — e.g. a still-"upcoming" class whose time
+    // silently passed with nobody ending it. Rather than reimplementing
+    // that "is this still relevant" rule a second time on the client (and
+    // risking the two copies drifting apart), stamp the identical formula
+    // the no-from/to student branch already enforces onto every class here,
+    // so any from/to caller — student Home or the teacher grid — can filter
+    // by it. The teacher grid ignores it by design; only student Home reads it.
+    if (isDateRangeQuery) {
+      for (const c of classes) {
+        c.isActiveForList = c.status === "live" || (c.status === "upcoming" && c.scheduledAt >= now);
+      }
+    }
 
     const response = { success: true, classes };
 

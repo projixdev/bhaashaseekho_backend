@@ -101,6 +101,19 @@ describe("GET /api/classes scoping", () => {
     const res = await request(app).get("/api/classes").set("Authorization", `Bearer ${signToken(student)}`);
     expect(res.body.attendancePercent).toBeNull();
   });
+
+  test("no from/to → existing behavior is unchanged: isActiveForList is not stamped onto the response at all", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createClass({ tutor: teacher, students: [student], scheduledAt: inOneDay() });
+
+    const res = await request(app).get("/api/classes").set("Authorization", `Bearer ${signToken(student)}`);
+
+    expect(res.body.classes.length).toBeGreaterThan(0);
+    for (const c of res.body.classes) {
+      expect(c).not.toHaveProperty("isActiveForList");
+    }
+  });
 });
 
 describe("GET /api/classes?from=&to= — date-range view for the app's week calendar (Phase 19 Part 3)", () => {
@@ -137,6 +150,40 @@ describe("GET /api/classes?from=&to= — date-range view for the app's week cale
     expect(res.body.classes.map((c) => c._id).sort()).toEqual(
       [completedInRange._id.toString(), cancelledInRange._id.toString(), upcomingInRange._id.toString()].sort()
     );
+  });
+
+  test("isActiveForList mirrors the default view's own 'is this still relevant' rule — status=live or (upcoming and not yet past)", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    // Range and the past/future fixtures below are all relative to
+    // Date.now(), not a fixed calendar week — unlike this describe block's
+    // first test (which only cares about status filtering, not time), this
+    // one specifically tests a scheduledAt-vs-now comparison, so pinning it
+    // to hardcoded 2026 dates would silently start failing the moment a real
+    // run's wall clock moves past that week.
+    const rangeStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const rangeEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const past = new Date(Date.now() - 60 * 60 * 1000);
+    const future = new Date(Date.now() + 60 * 60 * 1000);
+
+    const staleUpcoming = await createClass({ tutor: teacher, students: [student], scheduledAt: past, status: "upcoming" });
+    const liveButPast = await createClass({ tutor: teacher, students: [student], scheduledAt: past, status: "live" });
+    const genuinelyUpcoming = await createClass({ tutor: teacher, students: [student], scheduledAt: future, status: "upcoming" });
+    const cancelled = await createClass({ tutor: teacher, students: [student], scheduledAt: future, status: "cancelled" });
+
+    const res = await request(app)
+      .get(`/api/classes?from=${rangeStart.toISOString()}&to=${rangeEnd.toISOString()}`)
+      .set("Authorization", `Bearer ${signToken(teacher)}`);
+
+    const byId = Object.fromEntries(res.body.classes.map((c) => [c._id, c]));
+    // The exact case the student Home week-strip bug traced back to: an
+    // "upcoming" class whose time already passed with nobody ending it —
+    // still shows up in the date-range response (as it must, for the
+    // teacher's grid), but must not read as still-active.
+    expect(byId[staleUpcoming._id.toString()].isActiveForList).toBe(false);
+    expect(byId[liveButPast._id.toString()].isActiveForList).toBe(true);
+    expect(byId[genuinelyUpcoming._id.toString()].isActiveForList).toBe(true);
+    expect(byId[cancelled._id.toString()].isActiveForList).toBe(false);
   });
 
   test("scoping still applies — a date-ranged request never returns another teacher's class", async () => {
