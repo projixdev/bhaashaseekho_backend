@@ -78,6 +78,28 @@ describe("POST /api/assignments — homework/assessment assigned", () => {
     expect(sendTransactionalEmail.mock.calls[0][0].to).toBe(student.email);
   });
 
+  test("a recipient with notificationsEnabled: false is excluded from both the push and the email", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createEnrollment({ student, tutor: teacher });
+    await withPushToken(teacher, "tutor-token");
+    await withPushToken(student, "student-token");
+    await User.findByIdAndUpdate(student._id, { notificationsEnabled: false });
+
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, text: async () => "", json: async () => ({ data: [] }) });
+
+    const res = await request(app)
+      .post("/api/assignments")
+      .set("Authorization", `Bearer ${signToken(teacher)}`)
+      .field("studentId", student._id.toString())
+      .field("type", "homework")
+      .field("title", "Chapter 3 vocabulary");
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sendTransactionalEmail).not.toHaveBeenCalled();
+  });
+
   test("no matching enrollment (route already 403s) → creation never happens, no notification", async () => {
     const teacher = await createTeacher();
     const otherTeacher = await createTeacher();

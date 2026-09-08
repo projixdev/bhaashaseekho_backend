@@ -17,7 +17,10 @@ async function pushTo(user, payload) {
 // why (a static top-level import of brevoService.js from a file in app.js's
 // module graph broke an unrelated test's mocked reference to it).
 async function emailTo(user, { subject, bodyHtml }) {
-  if (!user?.email) return;
+  // notificationsEnabled === false matches pushTo's own check above — a user
+  // who turned notifications off shouldn't still get emailed just because
+  // email and push are two independent delivery channels for the same event.
+  if (!user?.email || user.notificationsEnabled === false) return;
   const [{ sendTransactionalEmail }, { renderEmailLayout }] = await Promise.all([
     import("./brevoService.js"),
     import("./emailTemplates.js"),
