@@ -223,6 +223,60 @@ describe("GET /api/classes?from=&to= — date-range view for the app's week cale
   });
 });
 
+describe("GET /api/classes?scope=past — finished-class history for the Classes tab", () => {
+  test("student sees only their own completed/cancelled classes, newest-first; upcoming and other students' are excluded", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    const otherStudent = await createStudent();
+
+    const older = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date("2026-08-01T10:00:00.000Z"),
+      status: "completed",
+    });
+    const newer = await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date("2026-09-01T10:00:00.000Z"),
+      status: "cancelled",
+    });
+    await createClass({ tutor: teacher, students: [student], scheduledAt: inOneDay() }); // upcoming — excluded
+    await createClass({
+      tutor: teacher,
+      students: [otherStudent],
+      scheduledAt: new Date("2026-09-05T10:00:00.000Z"),
+      status: "completed",
+    }); // another student's — excluded
+
+    const res = await request(app)
+      .get("/api/classes?scope=past")
+      .set("Authorization", `Bearer ${signToken(student)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.classes.map((c) => c._id)).toEqual([newer._id.toString(), older._id.toString()]);
+  });
+
+  test("history response carries just the list — none of the Profile stat fields", async () => {
+    const teacher = await createTeacher();
+    const student = await createStudent();
+    await createClass({
+      tutor: teacher,
+      students: [student],
+      scheduledAt: new Date("2026-08-01T10:00:00.000Z"),
+      attendance: [{ studentId: student._id.toString(), status: "present" }],
+    });
+
+    const res = await request(app)
+      .get("/api/classes?scope=past")
+      .set("Authorization", `Bearer ${signToken(student)}`);
+
+    expect(res.body.classes).toHaveLength(1);
+    expect(res.body).not.toHaveProperty("attendancePercent");
+    expect(res.body).not.toHaveProperty("completedCount");
+  });
+});
+
 describe("GET /api/assignments scoping", () => {
   test("teacher sees only assignments they created; student sees only their own homework", async () => {
     const teacherA = await createTeacher();

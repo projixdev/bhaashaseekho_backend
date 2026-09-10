@@ -27,6 +27,12 @@ export async function listUpcomingClasses(req, res) {
     const now = new Date();
     const { from, to } = req.query;
     const isDateRangeQuery = Boolean(from && to);
+    // ?scope=past — the finished-class history the app's Classes tab shows
+    // below the upcoming list. Distinguished purely by Class.status, no new
+    // field. Mutually exclusive with the from/to range query (that one is
+    // already status-unfiltered). "postponed" is deliberately excluded — it
+    // isn't finished, it's a class waiting on a new time.
+    const isPastQuery = !isDateRangeQuery && req.query.scope === "past";
     if (isDateRangeQuery) {
       const parsedFrom = new Date(from);
       const parsedTo = new Date(to);
@@ -35,6 +41,8 @@ export async function listUpcomingClasses(req, res) {
         return;
       }
       filter.scheduledAt = { $gte: parsedFrom, $lt: parsedTo };
+    } else if (isPastQuery) {
+      filter.status = { $in: ["completed", "cancelled"] };
     } else if (req.user.role === "teacher") {
       // Teachers also need to see a class whose scheduled time has already
       // passed but hasn't been ended yet (ROADMAP.md Phase 13) — that's
@@ -49,11 +57,14 @@ export async function listUpcomingClasses(req, res) {
       filter.$or = [{ status: "live" }, { status: "upcoming", scheduledAt: { $gte: now } }];
     }
 
-    const classes = await Class.find(filter)
-      .sort({ scheduledAt: 1 })
+    // History reads newest-first and is capped — it's a "recent classes"
+    // view, not a full archive. Every other view stays oldest-first.
+    const listQuery = Class.find(filter)
+      .sort({ scheduledAt: isPastQuery ? -1 : 1 })
       .populate("tutor", "name phone")
-      .populate("students", "name phone")
-      .lean();
+      .populate("students", "name phone");
+    if (isPastQuery) listQuery.limit(50);
+    const classes = await listQuery.lean();
 
     // The from/to (date-range) branch above deliberately returns every
     // status in the window, unfiltered by time — the teacher's WeekCalendar
@@ -76,6 +87,12 @@ export async function listUpcomingClasses(req, res) {
     }
 
     const response = { success: true, classes };
+
+    // The history view just needs the list — none of the Profile stats below.
+    if (isPastQuery) {
+      res.json(response);
+      return;
+    }
 
     // Both stats below are for the app's Profile screen — piggyback on
     // this endpoint (already the one each role's Home/Classes screens
