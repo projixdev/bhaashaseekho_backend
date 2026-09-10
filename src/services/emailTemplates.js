@@ -68,7 +68,7 @@ export function renderEmailLayout({ preheader = "", eyebrow, heading, bodyHtml }
                            the logo is thin, colorful linework, which all but
                            disappears without it against a saturated gradient. -->
                       <img
-                        src="https://res.cloudinary.com/p4uypdeo/image/upload/v1786541401/logo.png"
+                        src="https://res.cloudinary.com/ewle1pvq/image/upload/w_96/v1789015405/icon.png"
                         alt="${siteMeta.name}"
                         width="48"
                         height="48"
