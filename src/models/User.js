@@ -49,6 +49,17 @@ const UserSchema = new mongoose.Schema(
     isTrial: { type: Boolean, default: false },
     accessExpiresAt: { type: Date, default: null },
 
+    // Stamped when a user requests deletion from the app's Profile screen
+    // (profileController.requestAccountDeletion) — Apple Guideline 5.1.1(v).
+    // Once set, the account is unusable immediately: the current session is
+    // killed (activeSessionId cleared) and re-login is refused
+    // (authController.sendOtp/verifyOtp). isActive is also flipped to false
+    // so it shows greyed in the admin dashboard. The actual PII purge is
+    // done by the team within the window the app discloses to the user; a
+    // timestamp (not a boolean) so how long a request has been pending is
+    // visible.
+    deletionRequestedAt: { type: Date, default: null },
+
     // OTP is never stored in plaintext — otpHash is an HMAC keyed by
     // env.jwtSecret (see utils/otp.js). otpAttempts guards against brute-force
     // guessing of a live OTP within its expiry window.

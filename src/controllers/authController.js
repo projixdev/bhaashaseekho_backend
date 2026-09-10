@@ -123,6 +123,16 @@ export async function sendOtp(req, res) {
       return;
     }
 
+    // Deletion requested from the app (profileController.requestAccountDeletion)
+    // — the account is being wound down, no new sessions.
+    if (user.deletionRequestedAt) {
+      res.status(403).json({
+        success: false,
+        message: "This account is scheduled for deletion and can no longer be used.",
+      });
+      return;
+    }
+
     // Distinct from the "not enrolled" case above — this is a real account
     // whose time-limited window has simply passed (ROADMAP.md Phase 14).
     // Kept as its own message rather than collapsed into either the
@@ -242,6 +252,17 @@ export async function verifyOtp(req, res) {
     const user = await User.findOne({ phone }).select("+activeSessionId");
     if (!user || !user.otpHash || !user.otpExpiresAt) {
       res.status(400).json({ success: false, message: "Request a new code first." });
+      return;
+    }
+
+    // Belt-and-braces with sendOtp's own check: an account winding down for
+    // deletion can't complete a login even with a code that was already in
+    // flight when the request came in.
+    if (user.deletionRequestedAt) {
+      res.status(403).json({
+        success: false,
+        message: "This account is scheduled for deletion and can no longer be used.",
+      });
       return;
     }
 

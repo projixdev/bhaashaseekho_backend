@@ -1,18 +1,32 @@
 // PATCH /api/profile — editable name/email for the app's Profile screen.
 // Phone is deliberately not accepted (it's the OTP login identifier).
+// Also POST /api/profile/deletion-request (Apple Guideline 5.1.1(v)).
+import { jest } from "@jest/globals";
 import request from "supertest";
 import { connectTestDB, clearTestDB, disconnectTestDB } from "./helpers/db.js";
 import { createStudent, createTeacher, signToken } from "./helpers/fixtures.js";
 
+jest.unstable_mockModule("../src/services/brevoService.js", () => ({
+  sendTransactionalEmail: jest.fn().mockResolvedValue({}),
+}));
+
 const { default: app } = await import("../src/app.js");
 const { default: User } = await import("../src/models/User.js");
+const { sendTransactionalEmail } = await import("../src/services/brevoService.js");
 
 beforeAll(connectTestDB);
-afterEach(clearTestDB);
+afterEach(() => {
+  sendTransactionalEmail.mockClear();
+  return clearTestDB();
+});
 afterAll(disconnectTestDB);
 
 function patchProfile(user, body) {
   return request(app).patch("/api/profile").set("Authorization", `Bearer ${signToken(user)}`).send(body);
+}
+
+function requestDeletion(user) {
+  return request(app).post("/api/profile/deletion-request").set("Authorization", `Bearer ${signToken(user)}`).send();
 }
 
 test("updates name and email, returns the same shape as login", async () => {
@@ -91,4 +105,43 @@ test("accessExpiresAt reflects trial state — null for a permanent student, the
   const trial = await createStudent({ isTrial: true, accessExpiresAt: expiry });
   const trialRes = await patchProfile(trial, { name: "Still Trial" });
   expect(trialRes.body.user.accessExpiresAt).toBe(expiry.toISOString());
+});
+
+describe("POST /api/profile/deletion-request", () => {
+  test("deactivates the account, kills the session, notifies the team", async () => {
+    const student = await createStudent({ name: "Leaving User", email: "leaving@example.com" });
+    await User.findByIdAndUpdate(student._id, { activeSessionId: "sess-123", pushToken: "ExponentPushToken[x]" });
+
+    const res = await requestDeletion(student);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const stored = await User.findById(student._id).select("+activeSessionId");
+    expect(stored.deletionRequestedAt).toBeInstanceOf(Date);
+    expect(stored.isActive).toBe(false);
+    expect(stored.activeSessionId).toBeNull();
+    expect(stored.pushToken).toBeNull();
+
+    expect(sendTransactionalEmail).toHaveBeenCalledTimes(1);
+    const mail = sendTransactionalEmail.mock.calls[0][0];
+    expect(mail.subject).toContain("Leaving User");
+    expect(mail.htmlContent).toContain(student._id.toString());
+  });
+
+  test("idempotent — a repeat request succeeds without firing a second team email", async () => {
+    const student = await createStudent();
+
+    const first = await requestDeletion(student);
+    const second = await requestDeletion(student);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(sendTransactionalEmail).toHaveBeenCalledTimes(1);
+  });
+
+  test("no token → 401", async () => {
+    const res = await request(app).post("/api/profile/deletion-request").send();
+    expect(res.status).toBe(401);
+  });
 });

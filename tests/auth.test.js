@@ -47,6 +47,18 @@ describe("send-otp", () => {
     expect(res.body.message).toBe("No email on file — contact admin to add one.");
   });
 
+  test("an account that requested deletion → 403, no OTP generated or emailed", async () => {
+    const student = await createStudent({ email: "leaving@example.com" });
+    await User.findByIdAndUpdate(student._id, { deletionRequestedAt: new Date() });
+
+    const res = await sendOtp(student.phone);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe("This account is scheduled for deletion and can no longer be used.");
+    expect(sendTransactionalEmail).not.toHaveBeenCalled();
+    expect((await User.findById(student._id)).otpHash).toBeNull();
+  });
+
   test("enrolled number with email → 200, OTP generated and emailed (Brevo mocked)", async () => {
     const student = await createStudent({ email: "real@example.com" });
     const res = await sendOtp(student.phone);
@@ -111,6 +123,21 @@ describe("verify-otp", () => {
     const res = await verifyOtp(student.phone, wrongOtp);
     expect(res.status).toBe(400);
     expect(res.body.message).toBe("Incorrect code.");
+  });
+
+  test("correct OTP but the account requested deletion → 403, no session issued", async () => {
+    const student = await createStudent();
+    const otp = generateOtp();
+    student.otpHash = hashOtp(student.phone, otp);
+    student.otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    student.deletionRequestedAt = new Date();
+    await student.save();
+
+    const res = await verifyOtp(student.phone, otp);
+
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe("This account is scheduled for deletion and can no longer be used.");
+    expect(res.body.token).toBeUndefined();
   });
 
   test("expired OTP → rejected, 400", async () => {
