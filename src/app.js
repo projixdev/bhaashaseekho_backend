@@ -31,7 +31,6 @@ app.use(cors({ origin: env.corsOrigin }));
 app.use(express.json());
 
 app.get("/health", (req, res) => {
-  console.log('req.ip:', req.ip, '| x-forwarded-for:', req.headers['x-forwarded-for']);
   res.json({ status: "ok" });
 });
 
