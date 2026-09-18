@@ -5,7 +5,15 @@ import User from "../models/User.js";
 import { env } from "../config/env.js";
 import { sendTransactionalEmail } from "../services/brevoService.js";
 import { renderEmailLayout } from "../services/emailTemplates.js";
-import { generateOtp, hashOtp, verifyOtpHash, verifyReviewerOtp, OTP_TTL_MS, MAX_OTP_ATTEMPTS } from "../utils/otp.js";
+import {
+  generateOtp,
+  hashOtp,
+  verifyOtpHash,
+  verifyReviewerOtp,
+  OTP_TTL_MS,
+  MAX_OTP_ATTEMPTS,
+  OTP_RESEND_COOLDOWN_MS,
+} from "../utils/otp.js";
 import { validatePhoneInput, validateOtpInput, normalizePhone } from "../utils/validation.js";
 import { currentMonthKey } from "../utils/sessionMonth.js";
 import { normalizeTimezone } from "../utils/timezone.js";
@@ -149,6 +157,33 @@ export async function sendOtp(req, res) {
       res.status(400).json({
         success: false,
         message: "No email on file — contact admin to add one.",
+      });
+      return;
+    }
+
+    // Per-account resend cooldown, deliberately independent of the per-IP
+    // limiter in middleware/rateLimit.js. That one keys on the caller's
+    // address, so it does nothing about the abuse that actually costs us
+    // something here: an attacker rotating addresses (or just a user leaning
+    // on "Resend") pointing an unbounded stream of OTP emails at one
+    // specific person's inbox, one Brevo send each. This keys on the account
+    // being targeted instead, which is the thing being abused, so neither
+    // control substitutes for the other.
+    //
+    // Reads the lastOtpSentAt that the block below has always written but
+    // nothing ever checked. Placed after the not-enrolled/deletion/trial/
+    // no-email checks on purpose: a 429 here would otherwise be a signal
+    // that a number exists, and an unknown number must keep getting its 404.
+    const msSinceLastOtp = user.lastOtpSentAt ? Date.now() - user.lastOtpSentAt.getTime() : Infinity;
+    if (msSinceLastOtp < OTP_RESEND_COOLDOWN_MS) {
+      const retryAfterSeconds = Math.ceil((OTP_RESEND_COOLDOWN_MS - msSinceLastOtp) / 1000);
+      // Retry-After alongside the JSON body so a generic HTTP client backs
+      // off correctly even though the app reads retryAfterSeconds instead.
+      res.set("Retry-After", String(retryAfterSeconds));
+      res.status(429).json({
+        success: false,
+        message: `A code was just sent. Please wait ${retryAfterSeconds}s before requesting another.`,
+        retryAfterSeconds,
       });
       return;
     }

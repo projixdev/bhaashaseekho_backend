@@ -150,6 +150,18 @@ export function signAdminToken(user, opts = {}) {
   );
 }
 
+// authController.sendOtp refuses a second OTP for the same account within
+// OTP_RESEND_COOLDOWN_MS (60s) of the last one. Tests that legitimately need
+// two real logins back to back (deviceSession.test.js) or many sends for one
+// phone aren't the abuse that control exists to stop, so they clear the
+// timestamp between calls rather than waiting out a real minute. Clearing the
+// stored value is exactly what the passage of a minute would do, so this
+// doesn't stub or weaken the check itself — the cooldown's own behavior is
+// asserted directly in auth.test.js.
+export async function clearOtpCooldown(phone) {
+  await User.updateOne({ phone }, { $set: { lastOtpSentAt: null } });
+}
+
 // A fresh synthetic client IP per call — the backend's rate limiter buckets
 // by IP and lives at module scope for the life of a test file, so tests that
 // don't intend to exercise rate limiting must not share one IP by accident.

@@ -4,6 +4,12 @@ import { env } from "../config/env.js";
 export const OTP_TTL_MS = 5 * 60 * 1000;
 export const MAX_OTP_ATTEMPTS = 5;
 
+// Minimum gap between two OTP sends for the *same account*, enforced by
+// authController.sendOtp against User.lastOtpSentAt. Lives here next to the
+// other OTP tunables rather than in the controller so the whole OTP policy
+// (lifetime, guess budget, resend gap) is readable in one place.
+export const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+
 export function generateOtp() {
   // Uniform 6-digit code, no leading-zero bias from Math.random().
   return crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");

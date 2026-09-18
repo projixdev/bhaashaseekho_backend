@@ -12,16 +12,12 @@ const router = Router();
 // number keeps the normal limit.
 const skipForReviewer = (req) => isReviewerPhone(normalizePhone(req.body?.phone));
 
-// TEMPORARY, closed-testing period only: bumped from the default 5/10min to
-// 15/10min because switching between teacher/student test accounts on one
-// device shares this same per-IP bucket across every phone number tried, so
-// the default threshold was tripping on legitimate multi-account QA (see
-// QA-CLOSED-TESTING.md), not abuse. The per-IP mechanism itself is still the
-// right control -- only this number is temporarily relaxed. Revisit and
-// tighten back down to the default before general public launch.
-const QA_PERIOD_OTP_LIMIT = { limit: 15 };
-
-router.post("/send-otp", rateLimit("auth-send-otp", { skip: skipForReviewer, ...QA_PERIOD_OTP_LIMIT }), sendOtp);
-router.post("/verify-otp", rateLimit("auth-verify-otp", { skip: skipForReviewer, ...QA_PERIOD_OTP_LIMIT }), verifyOtp);
+// Closed testing is over, so the temporary 15/10min bump these two routes
+// carried during it is gone: no explicit limit here means both fall through
+// to rateLimit's own 5/10min default, same as every other rate-limited route.
+// (The QA problem that bump existed for -- one device cycling through several
+// test accounts sharing a per-IP bucket -- only ever applied to testers.)
+router.post("/send-otp", rateLimit("auth-send-otp", { skip: skipForReviewer }), sendOtp);
+router.post("/verify-otp", rateLimit("auth-verify-otp", { skip: skipForReviewer }), verifyOtp);
 
 export default router;

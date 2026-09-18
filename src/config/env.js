@@ -19,11 +19,31 @@ function required(name) {
 export const env = {
   nodeEnv: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT) || 4000,
+  // No default, on purpose. This used to fall back to "*" when CORS_ORIGIN
+  // was unset, which meant a deploy that simply forgot the variable silently
+  // became an API any website on the internet could call from a user's
+  // browser — the failure mode was invisible, because everything kept
+  // working. required() makes a missing value a loud failure instead.
+  //
+  // Note that an empty string would NOT have been fail-closed here: the cors
+  // package treats any falsy origin as "allow any origin" and still sends
+  // Access-Control-Allow-Origin: * (see its configureOrigin), so the only
+  // safe way to express "unset" is to refuse to start.
+  //
+  // A getter rather than a plain property so the throw lands when the HTTP
+  // app is actually constructed (app.js reads this at import time) — the
+  // scripts/ CLIs import env.js for MONGODB_URI and never serve a request,
+  // and stay runnable without it, same as every other feature-scoped var
+  // here. Setting CORS_ORIGIN="*" explicitly still works and still means
+  // "any origin"; the difference is that it's now somebody's decision.
+  //
   // Trailing slash trimmed: the CORS middleware echoes this string verbatim
   // as the Access-Control-Allow-Origin response header, which browsers only
   // accept if it matches the request's Origin header exactly — and Origin
   // headers never have a trailing slash.
-  corsOrigin: (process.env.CORS_ORIGIN || "*").trim().replace(/\/+$/, ""),
+  get corsOrigin() {
+    return required("CORS_ORIGIN").trim().replace(/\/+$/, "");
+  },
 
   get mongodbUri() {
     return required("MONGODB_URI");

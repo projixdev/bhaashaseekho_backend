@@ -9,7 +9,15 @@ import { jest } from "@jest/globals";
 import jwt from "jsonwebtoken";
 import request from "supertest";
 import { connectTestDB, clearTestDB, disconnectTestDB } from "./helpers/db.js";
-import { createStudent, createTeacher, createAdminUser, signToken, signAdminToken, nextIp } from "./helpers/fixtures.js";
+import {
+  createStudent,
+  createTeacher,
+  createAdminUser,
+  signToken,
+  signAdminToken,
+  nextIp,
+  clearOtpCooldown,
+} from "./helpers/fixtures.js";
 
 jest.unstable_mockModule("../src/services/brevoService.js", () => ({
   sendTransactionalEmail: jest.fn().mockResolvedValue({}),
@@ -22,7 +30,13 @@ beforeAll(connectTestDB);
 afterEach(clearTestDB);
 afterAll(disconnectTestDB);
 
-function sendOtp(phone) {
+// Clears the per-account 60s resend cooldown (authController.sendOtp) before
+// each send: these tests deliberately log the same account in twice in a row
+// to exercise the device-conflict path, which is the one legitimate case the
+// cooldown would otherwise block. The cooldown itself is covered in
+// auth.test.js, so suppressing it here loses no coverage.
+async function sendOtp(phone) {
+  await clearOtpCooldown(phone);
   return request(app).post("/api/auth/send-otp").set("X-Forwarded-For", nextIp()).send({ phone });
 }
 

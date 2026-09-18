@@ -18,7 +18,14 @@ export async function requireAuth(req, res, next) {
   }
 
   try {
-    const payload = jwt.verify(token, env.jwtSecret);
+    // algorithms pinned explicitly. Without it jsonwebtoken accepts whatever
+    // the token's own header asks for, which lets an attacker choose the
+    // verification algorithm — the classic escape being a token that declares
+    // "alg": "none". HS256 is what authController.signSession and
+    // adminController.adminLogin actually issue (jsonwebtoken's default), so
+    // this pins the verifier to the one algorithm we sign with and nothing
+    // else. Any change to the signing side has to be made here too.
+    const payload = jwt.verify(token, env.jwtSecret, { algorithms: ["HS256"] });
 
     // Catches a trial whose access window naturally elapsed while an
     // already-issued (otherwise still-valid for 30 days) token is still in

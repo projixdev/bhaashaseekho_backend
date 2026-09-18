@@ -79,6 +79,69 @@ describe("send-otp", () => {
     expect(res.body.email).toBe("v***@gmail.com");
     expect(JSON.stringify(res.body)).not.toContain("vijaykalyan3081");
   });
+
+  // Per-account resend cooldown. Every request in this describe block goes out
+  // from a fresh IP (see sendOtp above), so a 429 here can only have come from
+  // the per-account check and never from the per-IP limiter — which is exactly
+  // the independence the control is there to provide.
+  describe("per-account resend cooldown", () => {
+    test("a second code for the same account inside the 60s window → 429, no second email, existing OTP untouched", async () => {
+      const student = await createStudent({ email: "cooldown@example.com" });
+      // The Brevo mock isn't auto-reset between tests in this file, so the
+      // send counts below are only meaningful from a cleared baseline.
+      sendTransactionalEmail.mockClear();
+
+      const first = await sendOtp(student.phone);
+      expect(first.status).toBe(200);
+      const afterFirst = await User.findById(student._id);
+
+      const second = await sendOtp(student.phone);
+
+      expect(second.status).toBe(429);
+      expect(second.body.success).toBe(false);
+      expect(second.body.retryAfterSeconds).toBeGreaterThan(0);
+      expect(second.body.retryAfterSeconds).toBeLessThanOrEqual(60);
+      expect(second.headers["retry-after"]).toBe(String(second.body.retryAfterSeconds));
+
+      // Only the first send cost us a Brevo call.
+      expect(sendTransactionalEmail).toHaveBeenCalledTimes(1);
+
+      // The refused request must not have rolled the still-valid code the
+      // user is in the middle of typing.
+      const afterSecond = await User.findById(student._id);
+      expect(afterSecond.otpHash).toBe(afterFirst.otpHash);
+      expect(afterSecond.lastOtpSentAt.getTime()).toBe(afterFirst.lastOtpSentAt.getTime());
+    });
+
+    test("once the window has elapsed a fresh code is issued again", async () => {
+      const student = await createStudent({ email: "cooldown2@example.com" });
+      sendTransactionalEmail.mockClear();
+      const first = await sendOtp(student.phone);
+      expect(first.status).toBe(200);
+
+      // Backdate past the 60s window rather than waiting it out — the check
+      // reads lastOtpSentAt, so this is the same state a real minute produces.
+      await User.findByIdAndUpdate(student._id, { lastOtpSentAt: new Date(Date.now() - 61 * 1000) });
+
+      const second = await sendOtp(student.phone);
+      expect(second.status).toBe(200);
+      expect(second.body.devOtp).toMatch(/^\d{6}$/);
+      expect(sendTransactionalEmail).toHaveBeenCalledTimes(2);
+    });
+
+    test("the cooldown is per account — a second account is unaffected by the first's send", async () => {
+      const a = await createStudent({ email: "a-cooldown@example.com" });
+      const b = await createStudent({ email: "b-cooldown@example.com" });
+
+      expect((await sendOtp(a.phone)).status).toBe(200);
+      expect((await sendOtp(b.phone)).status).toBe(200);
+    });
+
+    test("an unknown number still gets 404, never a cooldown 429 (no account-existence oracle)", async () => {
+      const res = await sendOtp("9999999999");
+      expect(res.status).toBe(404);
+    });
+  });
 });
 
 describe("verify-otp", () => {

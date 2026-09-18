@@ -22,10 +22,15 @@ function checkRateLimit(key, { limit = 5, windowMs = 10 * 60 * 1000 } = {}) {
   return { allowed: true };
 }
 
+// req.ip, not X-Forwarded-For directly. The leftmost X-Forwarded-For value is
+// whatever the *client* put there — every proxy in the chain appends rather
+// than replaces, so a caller sending "X-Forwarded-For: <random>" on each
+// request used to land in a brand-new bucket every time and never hit the
+// limit at all. req.ip instead honours the app's "trust proxy" hop count (set
+// in app.js) and walks back a fixed number of entries from the socket, so it
+// resolves to the address our own edge observed and a client cannot forge.
 function getClientIp(req) {
-  const forwarded = req.headers["x-forwarded-for"];
-  const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  return value?.split(",")[0]?.trim() || req.ip || "unknown";
+  return req.ip || "unknown";
 }
 
 // Returns an Express middleware scoped to `prefix` (e.g. "leads", "contact")

@@ -17,7 +17,10 @@ export function optionalAuth(req, _res, next) {
   }
 
   try {
-    const payload = jwt.verify(token, env.jwtSecret);
+    // Same explicit algorithm pin as requireAuth.js — see the longer note
+    // there. This path attaches an identity rather than gating access, but a
+    // forged token would still be believed, so it needs the same constraint.
+    const payload = jwt.verify(token, env.jwtSecret, { algorithms: ["HS256"] });
     req.user = { id: payload.sub, phone: payload.phone, role: payload.role, isAdmin: Boolean(payload.isAdmin) };
   } catch {
     // Invalid/expired token on an optional-auth route — treat as anonymous
